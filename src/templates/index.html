@@ -8,6 +8,9 @@
         .user { color: blue; }
         .billy { color: green; }
         .controls { margin: 10px 0; }
+        .tools { margin: 10px 0; }
+        .tool { border: 1px solid #ddd; padding: 5px; margin: 5px 0; }
+        button { margin: 0 5px; }
     </style>
 </head>
 <body>
@@ -20,6 +23,20 @@
             <option value="humorous" {% if tone == 'humorous' %}selected{% endif %}>Humorous</option>
         </select>
     </div>
+    <div class="tools">
+        <h3>Saved Tools</h3>
+        {% for tool in tools %}
+            <div class="tool">
+                <p><strong>Prompt:</strong> {{ tool.prompt }}</p>
+                <p><strong>Code:</strong> <pre>{{ tool.tool_code }}</pre></p>
+                <p><strong>Result:</strong> {{ tool.tool_result }}</p>
+                <button onclick="deleteTool('{{ loop.index0 }}')">Delete</button>
+                <button onclick="reuseTool('{{ tool.tool_code | replace('\n', '\\n') }}')">Reuse</button>
+            </div>
+        {% else %}
+            <p>No tools saved yet.</p>
+        {% endfor %}
+    </div>
     <div class="chat-box" id="chat">
         {% for message in chat_history %}
             <p class="{{ message.role }}">{{ message.role }}: {{ message.content }}</p>
@@ -31,6 +48,12 @@
     </form>
 
     <script>
+        // Auto-scroll to the bottom of the chat box
+        window.onload = function() {
+            const chatBox = document.getElementById('chat');
+            chatBox.scrollTop = chatBox.scrollHeight;
+        };
+
         // Update tone via fetch
         function updateTone() {
             const tone = document.getElementById('tone').value;
@@ -40,6 +63,23 @@
                 body: JSON.stringify({ tone: tone })
             }).then(response => response.json())
               .then(data => console.log(data.message));
+        }
+
+        function deleteTool(index) {
+            fetch('/delete_tool', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ index: index })
+            }).then(response => response.json())
+              .then(data => {
+                  if (data.message === "Tool deleted") {
+                      location.reload();
+                  }
+              });
+        }
+
+        function reuseTool(code) {
+            document.getElementById('prompt').value = "Run this code: " + code.replace(/\\n/g, '\n');
         }
     </script>
 </body>
