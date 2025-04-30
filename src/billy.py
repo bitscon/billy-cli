@@ -26,13 +26,7 @@ def load_memory():
             return json.load(f)
     return []
 
-def save_memory(prompt, response, category="general", tool_code=None, tool_result=None):
-    memory = load_memory()
-    entry = {"prompt": prompt, "response": response, "category": category}
-    if tool_code and tool_result:
-        entry["tool_code"] = tool_code
-        entry["tool_result"] = tool_result
-    memory.append(entry)
+def save_memory(memory):
     with open("src/memory.json", "w") as f:
         json.dump(memory, f, indent=4)
 
@@ -86,7 +80,7 @@ def execute_python_code(code):
             ["python3", "temp_code.py"],
             capture_output=True,
             text=True,
-            timeout=5  # 5-second timeout for safety
+            timeout=5
         )
         os.remove("temp_code.py")
         if result.stderr:
@@ -111,80 +105,90 @@ def chat():
     global TONE, last_code, last_execution_result
     chat_history = []
     memory = load_memory()
+    tools = [entry for entry in memory if entry.get("category") == "tool"]
     for entry in memory:
         chat_history.append({"role": "user", "content": entry["prompt"]})
         chat_history.append({"role": "billy", "content": entry["response"]})
 
     if request.method == "POST":
-        user_input = request.form["prompt"]
+        user_input = request.form["prompt"].strip()  # Ignore empty inputs
         if not user_input:
-            return render_template("index.html", chat_history=chat_history, tone=TONE)
+            return render_template("index.html", chat_history=chat_history, tone=TONE, tools=tools)
 
         # Check if user wants to save the last executed code as a tool
         if "save this tool" in user_input.lower():
             if last_code and last_execution_result:
-                save_memory("Saved tool", "Tool saved for future use.", category="tool", tool_code=last_code, tool_result=last_execution_result)
+                save_memory(memory + [{"prompt": "Saved tool", "response": "Tool saved for future use.", "category": "tool", "tool_code": last_code, "tool_result": last_execution_result}])
                 response = "I’ve saved that tool in my toolbox for later!"
             else:
                 response = "I don’t have a recent tool to save. Ask me to write and run some code first!"
             chat_history.append({"role": "user", "content": user_input})
             chat_history.append({"role": "billy", "content": response})
-            return render_template("index.html", chat_history=chat_history, tone=TONE)
+            return render_template("index.html", chat_history=chat_history, tone=TONE, tools=tools)
 
-        # Determine category
-        category = "general"
-        if "code" in user_input.lower() or "write a" in user_input.lower():
-            category = "coding"
-        elif "search for" in user_input.lower():
-            category = "research"
-
-        # Check for memory recall
-        include_memory = False
-        memory_category = None
-        if "recall" in user_input.lower():
-            include_memory = True
-            if "coding" in user_input.lower():
-                memory_category = "coding"
-            elif "research" in user_input.lower():
-                memory_category = "research"
-            elif "tool" in user_input.lower():
-                memory_category = "tool"
-            user_input = user_input.replace("recall coding", "").replace("recall research", "").replace("recall tool", "").replace("recall past", "").strip()
-
-        # Handle web search
-        web_results = ""
-        if "search for" in user_input.lower():
-            search_query = user_input.replace("search for", "").strip()
-            web_results = web_search(search_query)
-            user_input = f"{user_input}\nWeb search results:\n{web_results}"
-
-        # Query Ollama
-        response = query_ollama(user_input, include_memory, memory_category)
-
-        # Check if the response contains Python code and execute it
-        execution_result = ""
-        if category == "coding" and "```python" in response:
-            # Extract the code block
-            code_start = response.index("```python") + 9
-            code_end = response.index("```", code_start)
-            code = response[code_start:code_end].strip()
+        # Check if user wants to run saved code
+        if user_input.lower().startswith("run this code:"):
+            code = user_input[14:].strip()
             execution_result = execute_python_code(code)
-            if execution_result:
-                response += f"\n\nExecution Result:\n{execution_result}"
-                # Store the code and result for potential saving
-                last_code = code
-                last_execution_result = execution_result
-            else:
-                last_code = None
-                last_execution_result = None
+            response = f"Running saved code:\n```python\n{code}\n```\n\nExecution Result:\n{execution_result}"
+            last_code = code
+            last_execution_result = execution_result
+            category = "coding"
+        else:
+            # Determine category
+            category = "general"
+            if "code" in user_input.lower() or "write a" in user_input.lower():
+                category = "coding"
+            elif "search for" in user_input.lower():
+                category = "research"
 
-        save_memory(user_input, response, category)
+            # Check for memory recall
+            include_memory = False
+            memory_category = None
+            if "recall" in user_input.lower():
+                include_memory = True
+                if "coding" in user_input.lower():
+                    memory_category = "coding"
+                elif "research" in user_input.lower():
+                    memory_category = "research"
+                elif "tool" in user_input.lower():
+                    memory_category = "tool"
+                user_input = user_input.replace("recall coding", "").replace("recall research", "").replace("recall tool", "").replace("recall past", "").strip()
+
+            # Handle web search
+            web_results = ""
+            if "search for" in user_input.lower():
+                search_query = user_input.replace("search for", "").strip()
+                web_results = web_search(search_query)
+                user_input = f"{user_input}\nWeb search results:\n{web_results}"
+
+            # Query Ollama
+            response = query_ollama(user_input, include_memory, memory_category)
+
+            # Check if the response contains Python code and execute it
+            execution_result = ""
+            if category == "coding" and "```python" in response:
+                # Extract the code block
+                code_start = response.index("```python") + 9
+                code_end = response.index("```", code_start)
+                code = response[code_start:code_end].strip()
+                execution_result = execute_python_code(code)
+                if execution_result:
+                    response += f"\n\nExecution Result:\n{execution_result}"
+                    # Store the code and result for potential saving
+                    last_code = code
+                    last_execution_result = execution_result
+                else:
+                    last_code = None
+                    last_execution_result = None
+
+        save_memory(memory + [{"prompt": user_input, "response": response, "category": category}])
 
         # Update chat history
         chat_history.append({"role": "user", "content": user_input})
         chat_history.append({"role": "billy", "content": response})
 
-    return render_template("index.html", chat_history=chat_history, tone=TONE)
+    return render_template("index.html", chat_history=chat_history, tone=TONE, tools=tools)
 
 @app.route("/update_tone", methods=["POST"])
 def update_tone():
@@ -198,6 +202,19 @@ def update_tone():
         save_config(config)
         return jsonify({"message": f"Tone updated to {new_tone}"}), 200
     return jsonify({"message": "Invalid tone"}), 400
+
+@app.route("/delete_tool", methods=["POST"])
+def delete_tool():
+    data = request.get_json()
+    index = data.get("index")
+    memory = load_memory()
+    tools = [entry for entry in memory if entry.get("category") == "tool"]
+    if 0 <= index < len(tools):
+        tool_to_delete = tools[index]
+        memory.remove(tool_to_delete)
+        save_memory(memory)
+        return jsonify({"message": "Tool deleted"}), 200
+    return jsonify({"error": "Invalid tool index"}), 400
 
 @app.route("/tts", methods=["POST"])
 def tts():
