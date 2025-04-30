@@ -2,6 +2,9 @@ import requests
 import json
 import os
 from googlesearch import search
+from flask import Flask, request, render_template
+
+app = Flask(__name__)
 
 # Load configuration
 with open("src/config.json", "r") as config_file:
@@ -26,7 +29,7 @@ def get_memory_context(category=None):
         return "No past interactions."
     context = "\nPast interactions:\n"
     for entry in memory:
-        entry_category = entry.get("category", "general")  # Default to "general" if category is missing
+        entry_category = entry.get("category", "general")
         if category is None or entry_category == category:
             context += f"[{entry_category}] User: {entry['prompt']}\nBilly: {entry['response']}\n"
     return context if context != "\nPast interactions:\n" else f"No past interactions for category '{category}'."
@@ -42,7 +45,6 @@ def web_search(query, num_results=3):
 
 def query_ollama(prompt, include_memory=False, memory_category=None):
     url = "http://localhost:11434/api/generate"
-    # Add tone and memory context to the prompt
     tone_instruction = f"Respond in a {TONE} tone."
     memory_context = get_memory_context(memory_category) if include_memory else ""
     full_prompt = f"{tone_instruction}\n{memory_context}\nUser: {prompt}"
@@ -61,22 +63,27 @@ def query_ollama(prompt, include_memory=False, memory_category=None):
     except requests.exceptions.RequestException as e:
         return f"Request failed: {str(e)}"
 
-if __name__ == "__main__":
-    while True:
-        # Get user input
-        user_input = input("You: ")
-        if user_input.lower() in ["exit", "quit"]:
-            print("Goodbye!")
-            break
+@app.route("/", methods=["GET", "POST"])
+def chat():
+    chat_history = []
+    memory = load_memory()
+    for entry in memory:
+        chat_history.append({"role": "user", "content": entry["prompt"]})
+        chat_history.append({"role": "billy", "content": entry["response"]})
 
-        # Determine category based on input
+    if request.method == "POST":
+        user_input = request.form["prompt"]
+        if not user_input:
+            return render_template("index.html", chat_history=chat_history)
+
+        # Determine category
         category = "general"
         if "code" in user_input.lower() or "write a" in user_input.lower():
             category = "coding"
         elif "search for" in user_input.lower():
             category = "research"
 
-        # Check if user wants to include memory
+        # Check for memory recall
         include_memory = False
         memory_category = None
         if "recall" in user_input.lower():
@@ -96,7 +103,13 @@ if __name__ == "__main__":
 
         # Query Ollama
         response = query_ollama(user_input, include_memory, memory_category)
-        print(f"Billy: {response}")
-
-        # Save the interaction to memory
         save_memory(user_input, response, category)
+
+        # Update chat history
+        chat_history.append({"role": "user", "content": user_input})
+        chat_history.append({"role": "billy", "content": response})
+
+    return render_template("index.html", chat_history=chat_history)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
