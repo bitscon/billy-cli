@@ -26,8 +26,9 @@ def get_memory_context(category=None):
         return "No past interactions."
     context = "\nPast interactions:\n"
     for entry in memory:
-        if category is None or entry["category"] == category:
-            context += f"[{entry['category']}] User: {entry['prompt']}\nBilly: {entry['response']}\n"
+        entry_category = entry.get("category", "general")  # Default to "general" if category is missing
+        if category is None or entry_category == category:
+            context += f"[{entry_category}] User: {entry['prompt']}\nBilly: {entry['response']}\n"
     return context if context != "\nPast interactions:\n" else f"No past interactions for category '{category}'."
 
 def web_search(query, num_results=3):
