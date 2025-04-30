@@ -1,1 +1,3 @@
 requests
+googlesearch-python
+googlesearch-python

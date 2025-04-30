@@ -10,5 +10,20 @@
     {
         "prompt": "Write a Python function to sort a list",
         "response": " Sure thing! Here's a simple way to sort a list using the built-in `sort()` function in Python:\n\n```python\ndef sort_list(your_list):\n    your_list.sort()\n    return your_list\n```\n\nYou can use this function like so:\n\n```python\nnumbers = [5, 3, 1, 4, 2]\nsorted_numbers = sort_list(numbers)\nprint(sorted_numbers)  # Output: [1, 2, 3, 4, 5]\n```\n\nIf you want to sort in descending order, just add `reverse=True`:\n\n```python\ndef sort_list_descending(your_list):\n    your_list.sort(reverse=True)\n    return your_list\n```\n\nHope this helps! If you have any questions or need further clarification, feel free to ask. Happy coding! \ud83d\ude0a"
+    },
+    {
+        "prompt": "Tell me about Python programming",
+        "response": " Hey there! So, Python is a super popular and easy-to-learn programming language that's great for beginners. It's known for its readability and versatility, making it a fantastic choice for web development, data analysis, artificial intelligence, machine learning, and more. Some cool things you can do with Python include automating repetitive tasks, creating websites and web applications, manipulating data, and even controlling hardware devices! Plus, Python's community is massive, which means there are tons of resources and support available if you get stuck or need help along the way. Give it a try and see what you can create with Python!",
+        "category": "general"
+    },
+    {
+        "prompt": "Write a Python function to sort a list",
+        "response": " Sure thing, buddy! Here's a simple Python function that sorts a given list using the built-in `sort()` function:\n\n```python\ndef sort_list(my_list):\n    my_list.sort()  # sorts the list in ascending order\n    return my_list\n```\n\nYou can use this function like so:\n\n```python\nnumbers = [5, 2, 9, 1, 6]\nprint(sort_list(numbers))\n```\n\nThis will print out the numbers in ascending order: `[1, 2, 5, 6, 9]`. If you want to sort it in descending order, you can modify the function like this:\n\n```python\ndef sort_list(my_list):\n    my_list.sort(reverse=True)  # sorts the list in descending order\n    return my_list\n```\n\nHope that helps! Let me know if you have any questions. :)",
+        "category": "coding"
+    },
+    {
+        "prompt": "Search for recent AI advancements\nWeb search results:\n- https://www.sciencedaily.com/news/computers_math/artificial_intelligence/\n- https://www.koombea.com/blog/7-recent-ai-developments/\n- https://blog.google/technology/ai/2024-ai-extraordinary-progress-advancement/",
+        "response": " Hey there! Here are some of the latest AI advancements that caught my eye:\n\n1. \"AI learns to listen, read, and understand like a human\" - A study by MIT and Carnegie Mellon University has resulted in an AI model that can understand text as well as humans do. The researchers trained their model on over 50 million web pages, allowing it to grasp context more effectively. (Source: ScienceDaily)\n2. \"7 Recent AI Developments You Need To Know About\" - This article from Koombea covers a range of advancements in AI, including new applications for voice assistants, advancements in machine learning, and the use of AI for good causes like environmental conservation. (Source: Koombea)\n3. \"AI advances to extraordinary levels by 2024\" - Google's blog post discusses how they expect AI to make significant strides over the next few years, with advancements in areas such as natural language processing, computer vision, and autonomous systems. (Source: Google Blog)\n\nHope you find these links helpful! Let me know if you need anything else. \ud83d\ude0a",
+        "category": "research"
     }
 ]

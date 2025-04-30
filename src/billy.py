@@ -1,6 +1,7 @@
 import requests
 import json
 import os
+from googlesearch import search
 
 # Load configuration
 with open("src/config.json", "r") as config_file:
@@ -13,26 +14,36 @@ def load_memory():
             return json.load(f)
     return []
 
-def save_memory(prompt, response):
+def save_memory(prompt, response, category="general"):
     memory = load_memory()
-    memory.append({"prompt": prompt, "response": response})
+    memory.append({"prompt": prompt, "response": response, "category": category})
     with open("src/memory.json", "w") as f:
         json.dump(memory, f, indent=4)
 
-def get_memory_context():
+def get_memory_context(category=None):
     memory = load_memory()
     if not memory:
         return "No past interactions."
     context = "\nPast interactions:\n"
     for entry in memory:
-        context += f"User: {entry['prompt']}\nBilly: {entry['response']}\n"
-    return context
+        if category is None or entry["category"] == category:
+            context += f"[{entry['category']}] User: {entry['prompt']}\nBilly: {entry['response']}\n"
+    return context if context != "\nPast interactions:\n" else f"No past interactions for category '{category}'."
 
-def query_ollama(prompt, include_memory=False):
+def web_search(query, num_results=3):
+    try:
+        results = []
+        for url in search(query, num_results=num_results):
+            results.append(url)
+        return "\n".join([f"- {url}" for url in results])
+    except Exception as e:
+        return f"Web search failed: {str(e)}"
+
+def query_ollama(prompt, include_memory=False, memory_category=None):
     url = "http://localhost:11434/api/generate"
     # Add tone and memory context to the prompt
     tone_instruction = f"Respond in a {TONE} tone."
-    memory_context = get_memory_context() if include_memory else ""
+    memory_context = get_memory_context(memory_category) if include_memory else ""
     full_prompt = f"{tone_instruction}\n{memory_context}\nUser: {prompt}"
     
     payload = {
@@ -56,15 +67,35 @@ if __name__ == "__main__":
         if user_input.lower() in ["exit", "quit"]:
             print("Goodbye!")
             break
-        
+
+        # Determine category based on input
+        category = "general"
+        if "code" in user_input.lower() or "write a" in user_input.lower():
+            category = "coding"
+        elif "search for" in user_input.lower():
+            category = "research"
+
         # Check if user wants to include memory
-        include_memory = "recall past" in user_input.lower()
-        if include_memory:
-            user_input = user_input.replace("recall past", "").strip()
-        
+        include_memory = False
+        memory_category = None
+        if "recall" in user_input.lower():
+            include_memory = True
+            if "coding" in user_input.lower():
+                memory_category = "coding"
+            elif "research" in user_input.lower():
+                memory_category = "research"
+            user_input = user_input.replace("recall coding", "").replace("recall research", "").replace("recall past", "").strip()
+
+        # Handle web search
+        web_results = ""
+        if "search for" in user_input.lower():
+            search_query = user_input.replace("search for", "").strip()
+            web_results = web_search(search_query)
+            user_input = f"{user_input}\nWeb search results:\n{web_results}"
+
         # Query Ollama
-        response = query_ollama(user_input, include_memory)
+        response = query_ollama(user_input, include_memory, memory_category)
         print(f"Billy: {response}")
-        
+
         # Save the interaction to memory
-        save_memory(user_input, response)
+        save_memory(user_input, response, category)
