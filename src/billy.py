@@ -2,14 +2,22 @@ import requests
 import json
 import os
 from googlesearch import search
-from flask import Flask, request, render_template
+from flask import Flask, request, render_template, jsonify
 
 app = Flask(__name__)
 
 # Load configuration
-with open("src/config.json", "r") as config_file:
-    config = json.load(config_file)
-    TONE = config["tone"]
+def load_config():
+    with open("src/config.json", "r") as config_file:
+        return json.load(config_file)
+
+def save_config(config):
+    with open("src/config.json", "w") as config_file:
+        json.dump(config, config_file, indent=4)
+
+config = load_config()
+TONE = config["tone"]
+ELEVEN_LABS_API_KEY = config.get("eleven_labs_api_key", None)  # Placeholder for Eleven Labs API key
 
 def load_memory():
     if os.path.exists("src/memory.json"):
@@ -63,8 +71,24 @@ def query_ollama(prompt, include_memory=False, memory_category=None):
     except requests.exceptions.RequestException as e:
         return f"Request failed: {str(e)}"
 
+def text_to_speech_eleven_labs(text):
+    if not ELEVEN_LABS_API_KEY:
+        return {"error": "Eleven Labs API key not configured"}, 400
+    # Placeholder for Eleven Labs TTS integration
+    # When ready, implement the API call to Eleven Labs here
+    # Example (commented out for now):
+    # url = "https://api.elevenlabs.io/v1/text-to-speech/<voice-id>"
+    # headers = {"xi-api-key": ELEVEN_LABS_API_KEY, "Content-Type": "application/json"}
+    # payload = {"text": text, "voice_settings": {"stability": 0.75, "similarity_boost": 0.75}}
+    # response = requests.post(url, json=payload, headers=headers)
+    # if response.status_code == 200:
+    #     return response.content  # Audio data
+    # return {"error": "Failed to generate speech"}, 500
+    return {"message": "Eleven Labs TTS placeholder - not implemented yet"}, 200
+
 @app.route("/", methods=["GET", "POST"])
 def chat():
+    global TONE
     chat_history = []
     memory = load_memory()
     for entry in memory:
@@ -74,7 +98,7 @@ def chat():
     if request.method == "POST":
         user_input = request.form["prompt"]
         if not user_input:
-            return render_template("index.html", chat_history=chat_history)
+            return render_template("index.html", chat_history=chat_history, tone=TONE)
 
         # Determine category
         category = "general"
@@ -109,7 +133,28 @@ def chat():
         chat_history.append({"role": "user", "content": user_input})
         chat_history.append({"role": "billy", "content": response})
 
-    return render_template("index.html", chat_history=chat_history)
+    return render_template("index.html", chat_history=chat_history, tone=TONE)
+
+@app.route("/update_tone", methods=["POST"])
+def update_tone():
+    global TONE
+    data = request.get_json()
+    new_tone = data.get("tone")
+    if new_tone in ["casual", "formal", "humorous"]:
+        TONE = new_tone
+        config = load_config()
+        config["tone"] = new_tone
+        save_config(config)
+        return jsonify({"message": f"Tone updated to {new_tone}"}), 200
+    return jsonify({"message": "Invalid tone"}), 400
+
+@app.route("/tts", methods=["POST"])
+def tts():
+    data = request.get_json()
+    text = data.get("text")
+    if not text:
+        return jsonify({"error": "No text provided"}), 400
+    return text_to_speech_eleven_labs(text)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)

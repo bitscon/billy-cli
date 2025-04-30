@@ -7,18 +7,40 @@
         .chat-box { border: 1px solid #ccc; padding: 10px; height: 400px; overflow-y: scroll; }
         .user { color: blue; }
         .billy { color: green; }
+        .controls { margin: 10px 0; }
     </style>
 </head>
 <body>
     <h1>Billy - Your AI Assistant</h1>
+    <div class="controls">
+        <label for="tone">Select Tone:</label>
+        <select id="tone" name="tone" onchange="updateTone()">
+            <option value="casual" {% if tone == 'casual' %}selected{% endif %}>Casual</option>
+            <option value="formal" {% if tone == 'formal' %}selected{% endif %}>Formal</option>
+            <option value="humorous" {% if tone == 'humorous' %}selected{% endif %}>Humorous</option>
+        </select>
+    </div>
     <div class="chat-box" id="chat">
         {% for message in chat_history %}
             <p class="{{ message.role }}">{{ message.role }}: {{ message.content }}</p>
         {% endfor %}
     </div>
     <form method="POST" action="/">
-        <input type="text" name="prompt" placeholder="Type your message..." style="width: 80%;">
+        <input type="text" name="prompt" id="prompt" placeholder="Type your message..." style="width: 80%;">
         <input type="submit" value="Send">
     </form>
+
+    <script>
+        // Update tone via fetch
+        function updateTone() {
+            const tone = document.getElementById('tone').value;
+            fetch('/update_tone', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tone: tone })
+            }).then(response => response.json())
+              .then(data => console.log(data.message));
+        }
+    </script>
 </body>
 </html>
