@@ -1,2 +1,1 @@
-# billy
-Grok Billy
+# Billy - A Self-Learning AI Assistant
