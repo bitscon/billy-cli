@@ -206,7 +206,7 @@ def update_tone():
 @app.route("/delete_tool", methods=["POST"])
 def delete_tool():
     data = request.get_json()
-    index = data.get("index")
+    index = int(data.get("index"))  # Convert to int
     memory = load_memory()
     tools = [entry for entry in memory if entry.get("category") == "tool"]
     if 0 <= index < len(tools):
