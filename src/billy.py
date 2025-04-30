@@ -1,6 +1,7 @@
 import requests
 import json
 import os
+import subprocess
 from googlesearch import search
 from flask import Flask, request, render_template, jsonify
 
@@ -17,7 +18,7 @@ def save_config(config):
 
 config = load_config()
 TONE = config["tone"]
-ELEVEN_LABS_API_KEY = config.get("eleven_labs_api_key", None)  # Placeholder for Eleven Labs API key
+ELEVEN_LABS_API_KEY = config.get("eleven_labs_api_key", None)
 
 def load_memory():
     if os.path.exists("src/memory.json"):
@@ -25,9 +26,13 @@ def load_memory():
             return json.load(f)
     return []
 
-def save_memory(prompt, response, category="general"):
+def save_memory(prompt, response, category="general", tool_code=None, tool_result=None):
     memory = load_memory()
-    memory.append({"prompt": prompt, "response": response, "category": category})
+    entry = {"prompt": prompt, "response": response, "category": category}
+    if tool_code and tool_result:
+        entry["tool_code"] = tool_code
+        entry["tool_result"] = tool_result
+    memory.append(entry)
     with open("src/memory.json", "w") as f:
         json.dump(memory, f, indent=4)
 
@@ -40,6 +45,8 @@ def get_memory_context(category=None):
         entry_category = entry.get("category", "general")
         if category is None or entry_category == category:
             context += f"[{entry_category}] User: {entry['prompt']}\nBilly: {entry['response']}\n"
+            if "tool_code" in entry and "tool_result" in entry:
+                context += f"[Tool] Code: {entry['tool_code']}\n[Tool] Result: {entry['tool_result']}\n"
     return context if context != "\nPast interactions:\n" else f"No past interactions for category '{category}'."
 
 def web_search(query, num_results=3):
@@ -71,24 +78,37 @@ def query_ollama(prompt, include_memory=False, memory_category=None):
     except requests.exceptions.RequestException as e:
         return f"Request failed: {str(e)}"
 
+def execute_python_code(code):
+    try:
+        with open("temp_code.py", "w") as f:
+            f.write(code)
+        result = subprocess.run(
+            ["python3", "temp_code.py"],
+            capture_output=True,
+            text=True,
+            timeout=5  # 5-second timeout for safety
+        )
+        os.remove("temp_code.py")
+        if result.stderr:
+            return f"Error: {result.stderr}"
+        return result.stdout.strip()
+    except subprocess.TimeoutExpired:
+        return "Error: Code execution timed out after 5 seconds."
+    except Exception as e:
+        return f"Error: {str(e)}"
+
 def text_to_speech_eleven_labs(text):
     if not ELEVEN_LABS_API_KEY:
         return {"error": "Eleven Labs API key not configured"}, 400
-    # Placeholder for Eleven Labs TTS integration
-    # When ready, implement the API call to Eleven Labs here
-    # Example (commented out for now):
-    # url = "https://api.elevenlabs.io/v1/text-to-speech/<voice-id>"
-    # headers = {"xi-api-key": ELEVEN_LABS_API_KEY, "Content-Type": "application/json"}
-    # payload = {"text": text, "voice_settings": {"stability": 0.75, "similarity_boost": 0.75}}
-    # response = requests.post(url, json=payload, headers=headers)
-    # if response.status_code == 200:
-    #     return response.content  # Audio data
-    # return {"error": "Failed to generate speech"}, 500
     return {"message": "Eleven Labs TTS placeholder - not implemented yet"}, 200
+
+# Store the last executed code and result for potential saving
+last_code = None
+last_execution_result = None
 
 @app.route("/", methods=["GET", "POST"])
 def chat():
-    global TONE
+    global TONE, last_code, last_execution_result
     chat_history = []
     memory = load_memory()
     for entry in memory:
@@ -98,6 +118,17 @@ def chat():
     if request.method == "POST":
         user_input = request.form["prompt"]
         if not user_input:
+            return render_template("index.html", chat_history=chat_history, tone=TONE)
+
+        # Check if user wants to save the last executed code as a tool
+        if "save this tool" in user_input.lower():
+            if last_code and last_execution_result:
+                save_memory("Saved tool", "Tool saved for future use.", category="tool", tool_code=last_code, tool_result=last_execution_result)
+                response = "I’ve saved that tool in my toolbox for later!"
+            else:
+                response = "I don’t have a recent tool to save. Ask me to write and run some code first!"
+            chat_history.append({"role": "user", "content": user_input})
+            chat_history.append({"role": "billy", "content": response})
             return render_template("index.html", chat_history=chat_history, tone=TONE)
 
         # Determine category
@@ -116,7 +147,9 @@ def chat():
                 memory_category = "coding"
             elif "research" in user_input.lower():
                 memory_category = "research"
-            user_input = user_input.replace("recall coding", "").replace("recall research", "").replace("recall past", "").strip()
+            elif "tool" in user_input.lower():
+                memory_category = "tool"
+            user_input = user_input.replace("recall coding", "").replace("recall research", "").replace("recall tool", "").replace("recall past", "").strip()
 
         # Handle web search
         web_results = ""
@@ -127,6 +160,24 @@ def chat():
 
         # Query Ollama
         response = query_ollama(user_input, include_memory, memory_category)
+
+        # Check if the response contains Python code and execute it
+        execution_result = ""
+        if category == "coding" and "```python" in response:
+            # Extract the code block
+            code_start = response.index("```python") + 9
+            code_end = response.index("```", code_start)
+            code = response[code_start:code_end].strip()
+            execution_result = execute_python_code(code)
+            if execution_result:
+                response += f"\n\nExecution Result:\n{execution_result}"
+                # Store the code and result for potential saving
+                last_code = code
+                last_execution_result = execution_result
+            else:
+                last_code = None
+                last_execution_result = None
+
         save_memory(user_input, response, category)
 
         # Update chat history
