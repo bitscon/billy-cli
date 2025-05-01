@@ -2,10 +2,18 @@ import requests
 import json
 import os
 import subprocess
+import sqlite3
+from datetime import datetime
 from googlesearch import search
 from flask import Flask, request, render_template, jsonify
 
 app = Flask(__name__)
+
+# Database connection
+def get_db_connection():
+    conn = sqlite3.connect("/home/billybs/Projects/billy/db/billy.db")
+    conn.row_factory = sqlite3.Row
+    return conn
 
 # Load configuration
 def load_config():
@@ -18,17 +26,24 @@ def save_config(config):
 
 config = load_config()
 TONE = config["tone"]
-ELEVEN_LABS_API_KEY = config.get("eleven_labs_api_key", None)
 
 def load_memory():
-    if os.path.exists("src/memory.json"):
-        with open("src/memory.json", "r") as f:
-            return json.load(f)
-    return []
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM memory")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
-def save_memory(memory):
-    with open("src/memory.json", "w") as f:
-        json.dump(memory, f, indent=4)
+def save_memory(prompt, response, category="general", tool_code=None, tool_result=None):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO memory (prompt, response, category, tool_code, tool_result, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (prompt, response, category, tool_code, tool_result, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    conn.commit()
+    conn.close()
 
 def get_memory_context(category=None):
     memory = load_memory()
@@ -39,7 +54,7 @@ def get_memory_context(category=None):
         entry_category = entry.get("category", "general")
         if category is None or entry_category == category:
             context += f"[{entry_category}] User: {entry['prompt']}\nBilly: {entry['response']}\n"
-            if "tool_code" in entry and "tool_result" in entry:
+            if "tool_code" in entry and "tool_result" in entry and entry["tool_code"] and entry["tool_result"]:
                 context += f"[Tool] Code: {entry['tool_code']}\n[Tool] Result: {entry['tool_result']}\n"
     return context if context != "\nPast interactions:\n" else f"No past interactions for category '{category}'."
 
@@ -91,11 +106,6 @@ def execute_python_code(code):
     except Exception as e:
         return f"Error: {str(e)}"
 
-def text_to_speech_eleven_labs(text):
-    if not ELEVEN_LABS_API_KEY:
-        return {"error": "Eleven Labs API key not configured"}, 400
-    return {"message": "Eleven Labs TTS placeholder - not implemented yet"}, 200
-
 # Store the last executed code and result for potential saving
 last_code = None
 last_execution_result = None
@@ -111,14 +121,13 @@ def chat():
         chat_history.append({"role": "billy", "content": entry["response"]})
 
     if request.method == "POST":
-        user_input = request.form["prompt"].strip()  # Ignore empty inputs
+        user_input = request.form["prompt"].strip()
         if not user_input:
             return render_template("index.html", chat_history=chat_history, tone=TONE, tools=tools)
 
-        # Check if user wants to save the last executed code as a tool
         if "save this tool" in user_input.lower():
             if last_code and last_execution_result:
-                save_memory(memory + [{"prompt": "Saved tool", "response": "Tool saved for future use.", "category": "tool", "tool_code": last_code, "tool_result": last_execution_result}])
+                save_memory("Saved tool", "Tool saved for future use.", "tool", last_code, last_execution_result)
                 response = "I’ve saved that tool in my toolbox for later!"
             else:
                 response = "I don’t have a recent tool to save. Ask me to write and run some code first!"
@@ -126,7 +135,6 @@ def chat():
             chat_history.append({"role": "billy", "content": response})
             return render_template("index.html", chat_history=chat_history, tone=TONE, tools=tools)
 
-        # Check if user wants to run saved code
         if user_input.lower().startswith("run this code:"):
             code = user_input[14:].strip()
             execution_result = execute_python_code(code)
@@ -135,14 +143,12 @@ def chat():
             last_execution_result = execution_result
             category = "coding"
         else:
-            # Determine category
             category = "general"
             if "code" in user_input.lower() or "write a" in user_input.lower():
                 category = "coding"
             elif "search for" in user_input.lower():
                 category = "research"
 
-            # Check for memory recall
             include_memory = False
             memory_category = None
             if "recall" in user_input.lower():
@@ -155,36 +161,30 @@ def chat():
                     memory_category = "tool"
                 user_input = user_input.replace("recall coding", "").replace("recall research", "").replace("recall tool", "").replace("recall past", "").strip()
 
-            # Handle web search
             web_results = ""
             if "search for" in user_input.lower():
                 search_query = user_input.replace("search for", "").strip()
                 web_results = web_search(search_query)
                 user_input = f"{user_input}\nWeb search results:\n{web_results}"
 
-            # Query Ollama
             response = query_ollama(user_input, include_memory, memory_category)
 
-            # Check if the response contains Python code and execute it
             execution_result = ""
             if category == "coding" and "```python" in response:
-                # Extract the code block
                 code_start = response.index("```python") + 9
                 code_end = response.index("```", code_start)
                 code = response[code_start:code_end].strip()
                 execution_result = execute_python_code(code)
                 if execution_result:
                     response += f"\n\nExecution Result:\n{execution_result}"
-                    # Store the code and result for potential saving
                     last_code = code
                     last_execution_result = execution_result
                 else:
                     last_code = None
                     last_execution_result = None
 
-        save_memory(memory + [{"prompt": user_input, "response": response, "category": category}])
+        save_memory(user_input, response, category)
 
-        # Update chat history
         chat_history.append({"role": "user", "content": user_input})
         chat_history.append({"role": "billy", "content": response})
 
@@ -206,23 +206,32 @@ def update_tone():
 @app.route("/delete_tool", methods=["POST"])
 def delete_tool():
     data = request.get_json()
-    index = int(data.get("index"))  # Convert to int
+    index = int(data.get("index"))
     memory = load_memory()
     tools = [entry for entry in memory if entry.get("category") == "tool"]
     if 0 <= index < len(tools):
         tool_to_delete = tools[index]
         memory.remove(tool_to_delete)
-        save_memory(memory)
+        # Save the updated memory list back to the database
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM memory")  # Clear existing memory
+        for entry in memory:
+            cursor.execute('''
+                INSERT INTO memory (prompt, response, category, tool_code, tool_result, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (
+                entry.get("prompt"),
+                entry.get("response"),
+                entry.get("category", "general"),
+                entry.get("tool_code"),
+                entry.get("tool_result"),
+                entry.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            ))
+        conn.commit()
+        conn.close()
         return jsonify({"message": "Tool deleted"}), 200
     return jsonify({"error": "Invalid tool index"}), 400
-
-@app.route("/tts", methods=["POST"])
-def tts():
-    data = request.get_json()
-    text = data.get("text")
-    if not text:
-        return jsonify({"error": "No text provided"}), 400
-    return text_to_speech_eleven_labs(text)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
