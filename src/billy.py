@@ -49,6 +49,8 @@ NEXTCLOUD_PASSWORD = connectors.get("nextcloud", {}).get("password", "")
 GITHUB_TOKEN = connectors.get("github", {}).get("api_key", "")
 g = Github(GITHUB_TOKEN) if GITHUB_TOKEN else None
 REPO_NAME = "bitscon/billy"
+REPO_URL = f"https://{GITHUB_TOKEN}@github.com/{REPO_NAME}.git"
+LOCAL_REPO_PATH = "/home/billybs/Projects/billy-local-repo"
 
 def load_memory():
     conn = get_db_connection()
@@ -102,94 +104,205 @@ def analyze_common_errors():
     common_errors = "\n".join([f"Error: {row['error']} (occurred {row['count']} times)" for row in rows])
     return f"Common errors in past executions:\n{common_errors}"
 
-def get_repo_contents(repo, path=""):
-    """Recursively fetch all files and their contents from the GitHub repository."""
-    if not g:
-        return "GitHub API token not configured. Please set it in the admin panel at /admin."
+def ensure_local_repo():
+    """Ensure the local repository is cloned and up-to-date."""
+    if not os.path.exists(LOCAL_REPO_PATH):
+        os.makedirs(LOCAL_REPO_PATH, exist_ok=True)
+        try:
+            subprocess.run(
+                ["git", "clone", REPO_URL, LOCAL_REPO_PATH],
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            return "Cloned repository to local path."
+        except subprocess.CalledProcessError as e:
+            return f"Error cloning repository: {e.stderr}"
+    else:
+        # Pull the latest changes
+        try:
+            subprocess.run(
+                ["git", "-C", LOCAL_REPO_PATH, "pull"],
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            return "Pulled latest changes from repository."
+        except subprocess.CalledProcessError as e:
+            return f"Error pulling repository: {e.stderr}"
+
+def get_local_repo_contents(path=LOCAL_REPO_PATH):
+    """Recursively fetch all files and their contents from the local repository."""
     try:
-        contents = repo.get_contents(path)
         result = []
-        for content in contents:
-            if content.type == "dir":
-                # Recursively fetch contents of directories
-                result.extend(get_repo_contents(repo, content.path))
-            else:
+        for root, dirs, files in os.walk(path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                relative_path = os.path.relpath(file_path, LOCAL_REPO_PATH)
                 try:
-                    # Fetch file content
-                    file_content = content.decoded_content.decode()
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        content = f.read()
                     result.append({
-                        "path": content.path,
-                        "content": file_content
+                        "path": relative_path,
+                        "content": content
                     })
                 except Exception as e:
                     result.append({
-                        "path": content.path,
-                        "content": f"Error fetching file content: {str(e)}"
+                        "path": relative_path,
+                        "content": f"Error reading file content: {str(e)}"
                     })
         return result
     except Exception as e:
-        return f"Error fetching repository contents: {str(e)}"
+        return f"Error reading local repository contents: {str(e)}"
 
 def get_own_code():
-    """Fetch all files in the repository and return their contents."""
-    if not g:
-        return "GitHub API token not configured. Please set it in the admin panel at /admin."
-    try:
-        repo = g.get_repo(REPO_NAME)
-        files = get_repo_contents(repo)
-        if isinstance(files, str):
-            return files  # Error message
-        # Format the output for display
-        output = "Here are the contents of my repository:\n"
-        for file in files:
-            output += f"\nFile: {file['path']}\n```python\n{file['content']}\n```"
-        return output
-    except Exception as e:
-        return f"Error fetching code from GitHub: {str(e)}"
+    """Fetch all files in the local repository and return their contents."""
+    ensure_local_repo()
+    files = get_local_repo_contents()
+    if isinstance(files, str):
+        return files  # Error message
+    # Format the output for display
+    output = "Here are the contents of my local repository:\n"
+    for file in files:
+        output += f"\nFile: {file['path']}\n```python\n{file['content']}\n```"
+    return output
 
-def create_file_in_repo(file_path, content, commit_message="Created file via Billy"):
-    """Create a file in the GitHub repository."""
-    if not g:
-        return "GitHub API token not configured. Please set it in the admin panel at /admin."
+def create_local_file(file_path, content):
+    """Create or update a file in the local repository."""
+    ensure_local_repo()
+    local_file_path = os.path.join(LOCAL_REPO_PATH, file_path)
     try:
-        repo = g.get_repo(REPO_NAME)
-        repo.create_file(file_path, commit_message, content)
-        return f"Successfully created {file_path} in the repository."
+        os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
+        with open(local_file_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return f"Successfully created/updated {file_path} locally."
     except Exception as e:
-        return f"Error creating file in GitHub: {str(e)}"
+        return f"Error creating/updating local file: {str(e)}"
 
-def update_file_in_repo(file_path, content, commit_message="Updated file via Billy"):
-    """Update a file in the GitHub repository."""
-    if not g:
-        return "GitHub API token not configured. Please set it in the admin panel at /admin."
+def delete_local_file(file_path):
+    """Delete a file in the local repository."""
+    ensure_local_repo()
+    local_file_path = os.path.join(LOCAL_REPO_PATH, file_path)
     try:
-        repo = g.get_repo(REPO_NAME)
-        contents = repo.get_contents(file_path)
-        repo.update_file(file_path, commit_message, content, contents.sha)
-        return f"Successfully updated {file_path} in the repository."
+        if os.path.exists(local_file_path):
+            os.remove(local_file_path)
+            return f"Successfully deleted {file_path} locally."
+        return f"File {file_path} does not exist locally."
     except Exception as e:
-        return f"Error updating file in GitHub: {str(e)}"
+        return f"Error deleting local file: {str(e)}"
 
-def delete_file_in_repo(file_path, commit_message="Deleted file via Billy"):
-    """Delete a file in the GitHub repository."""
-    if not g:
-        return "GitHub API token not configured. Please set it in the admin panel at /admin."
+def commit_and_push_changes(commit_message="Changes by Billy"):
+    """Commit and push changes to the remote repository."""
+    ensure_local_repo()
     try:
-        repo = g.get_repo(REPO_NAME)
-        # Fetch the latest contents to get the current SHA
-        contents = repo.get_contents(file_path)
-        repo.delete_file(file_path, commit_message, contents.sha)
-        return f"Successfully deleted {file_path} from the repository."
+        # Stage all changes
+        subprocess.run(
+            ["git", "-C", LOCAL_REPO_PATH, "add", "."],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        # Commit changes
+        subprocess.run(
+            ["git", "-C", LOCAL_REPO_PATH, "commit", "-m", commit_message],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        # Push to GitHub
+        subprocess.run(
+            ["git", "-C", LOCAL_REPO_PATH, "push", "origin", "main"],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        return "Successfully committed and pushed changes to GitHub."
+    except subprocess.CalledProcessError as e:
+        return f"Error committing/pushing changes: {e.stderr}"
+
+def test_code_in_sandbox(code):
+    """Test the code in the Docker sandbox."""
+    try:
+        # Write the code to a temporary file
+        with open("/tmp/temp_code.py", "w") as f:
+            f.write(code)
+        # Run the code in the Docker container
+        result = subprocess.run(
+            [
+                "docker", "run", "--rm",
+                "-v", "/tmp/temp_code.py:/app/temp_code.py",
+                "--security-opt", "no-new-privileges",
+                "--cap-drop", "ALL",
+                "--network", "none",
+                "billy-python-sandbox",
+                "python", "temp_code.py"
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.stderr:
+            return f"Test failed: {result.stderr}"
+        return "Test passed: Code executed successfully."
+    except subprocess.TimeoutExpired:
+        return "Test failed: Code execution timed out after 5 seconds."
     except Exception as e:
-        return f"Error deleting file in GitHub: {str(e)}"
+        return f"Test failed: {str(e)}"
+    finally:
+        # Clean up the temporary file
+        if os.path.exists("/tmp/temp_code.py"):
+            os.remove("/tmp/temp_code.py")
+
+def create_file_with_test(file_path, content, commit_message="Created file via Billy"):
+    """Create a file locally, test it if it's Python code, and push to GitHub if tests pass."""
+    # Create or update the file locally
+    result = create_local_file(file_path, content)
+    if "Error" in result:
+        return result
+
+    # If the file is a Python file, test it in the sandbox
+    if file_path.endswith(".py"):
+        test_result = test_code_in_sandbox(content)
+        if "Test failed" in test_result:
+            return f"Failed to create {file_path}: {test_result}"
+    
+    # Commit and push changes
+    commit_result = commit_and_push_changes(commit_message)
+    return f"{result}\n{commit_result}"
+
+def update_file_with_test(file_path, content, commit_message="Updated file via Billy"):
+    """Update a file locally, test it if it's Python code, and push to GitHub if tests pass."""
+    # Update the file locally
+    result = create_local_file(file_path, content)
+    if "Error" in result:
+        return result
+
+    # If the file is a Python file, test it in the sandbox
+    if file_path.endswith(".py"):
+        test_result = test_code_in_sandbox(content)
+        if "Test failed" in test_result:
+            return f"Failed to update {file_path}: {test_result}"
+    
+    # Commit and push changes
+    commit_result = commit_and_push_changes(commit_message)
+    return f"{result}\n{commit_result}"
+
+def delete_file_with_commit(file_path, commit_message="Deleted file via Billy"):
+    """Delete a file locally and push the deletion to GitHub."""
+    # Delete the file locally
+    result = delete_local_file(file_path)
+    if "Error" in result:
+        return result
+    
+    # Commit and push changes
+    commit_result = commit_and_push_changes(commit_message)
+    return f"{result}\n{commit_result}"
 
 def analyze_repo_for_improvements():
     """Analyze the repository and suggest improvements (placeholder for future autonomy)."""
-    if not g:
-        return "GitHub API token not configured. Please set it in the admin panel at /admin."
+    ensure_local_repo()
     try:
-        repo = g.get_repo(REPO_NAME)
-        files = get_repo_contents(repo)
+        files = get_local_repo_contents()
         if isinstance(files, str):
             return files  # Error message
         # Basic analysis: Check for missing README.md as an example
@@ -394,7 +507,7 @@ def chat():
         elif user_input.lower().startswith("create file "):
             file_path = user_input[len("create file "):].strip()
             content = "This is a new file created by Billy."
-            response = create_file_in_repo(file_path, content, f"Created {file_path} via Billy")
+            response = create_file_with_test(file_path, content, f"Created {file_path} via Billy")
             category = "repo-management"
         elif user_input.lower().startswith("update file "):
             parts = user_input[len("update file "):].strip().split(" with content ")
@@ -402,11 +515,11 @@ def chat():
                 response = "Please use the format: 'update file <file_path> with content <content>'"
             else:
                 file_path, content = parts
-                response = update_file_in_repo(file_path, content, f"Updated {file_path} via Billy")
+                response = update_file_with_test(file_path, content, f"Updated {file_path} via Billy")
             category = "repo-management"
         elif user_input.lower().startswith("delete file "):
             file_path = user_input[len("delete file "):].strip()
-            response = delete_file_in_repo(file_path, f"Deleted {file_path} via Billy")
+            response = delete_file_with_commit(file_path, f"Deleted {file_path} via Billy")
             category = "repo-management"
         else:
             category = "general"
