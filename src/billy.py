@@ -201,7 +201,11 @@ def execute_python_code(code):
             timeout=5  # Timeout handled by subprocess
         )
         if result.stderr:
-            return f"Error: {result.stderr}"
+            # If there's an error, query Ollama for a fix
+            error_message = result.stderr
+            debug_prompt = f"The following Python code failed with this error:\n\nCode:\n```python\n{code}\n```\n\nError:\n{error_message}\n\nPlease analyze the error, explain why it occurred, and suggest a corrected version of the code."
+            fix_suggestion = query_ollama(debug_prompt)
+            return f"Error: {error_message}\n\nDebug Suggestion:\n{fix_suggestion}"
         return result.stdout.strip()
     except subprocess.TimeoutExpired:
         return "Error: Code execution timed out after 5 seconds."
@@ -277,9 +281,16 @@ def chat():
 
             execution_result = ""
             if category == "coding" and "```python" in response:
+                # Introduce a deliberate syntax error if requested
                 code_start = response.index("```python") + 9
                 code_end = response.index("```", code_start)
                 code = response[code_start:code_end].strip()
+                if "include a syntax error" in user_input.lower():
+                    # Introduce a missing colon after the function definition
+                    code_lines = code.split("\n")
+                    if code_lines and "def " in code_lines[0]:
+                        code_lines[0] = code_lines[0].replace("):", ")")  # Remove colon
+                        code = "\n".join(code_lines)
                 execution_result = execute_python_code(code)
                 if execution_result:
                     response += f"\n\nExecution Result:\n{execution_result}"
