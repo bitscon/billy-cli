@@ -1,3 +1,4 @@
 venv/
 init_db.py
 db/billy.db
+src/__pycache__/billy.cpython-310.pyc
