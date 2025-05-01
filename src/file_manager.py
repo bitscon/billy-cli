@@ -1,7 +1,11 @@
 import os
 import subprocess
+import logging
 from github_manager import ensure_local_repo, commit_and_push_changes
 from config import Config
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG, filename="billy.log", format="%(asctime)s %(levelname)s:%(message)s")
 
 config = Config()
 LOCAL_REPO_PATH = config.LOCAL_REPO_PATH
@@ -14,8 +18,10 @@ def create_local_file(file_path, content):
         os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
         with open(local_file_path, "w", encoding="utf-8") as f:
             f.write(content)
+        logging.info(f"Created/updated local file: {file_path}")
         return f"Successfully created/updated {file_path} locally."
     except Exception as e:
+        logging.error(f"Error creating/updating local file: {str(e)}")
         return f"Error creating/updating local file: {str(e)}"
 
 def delete_local_file(file_path):
@@ -25,9 +31,12 @@ def delete_local_file(file_path):
     try:
         if os.path.exists(local_file_path):
             os.remove(local_file_path)
+            logging.info(f"Deleted local file: {file_path}")
             return f"Successfully deleted {file_path} locally."
+        logging.warning(f"File does not exist locally: {file_path}")
         return f"File {file_path} does not exist locally."
     except Exception as e:
+        logging.error(f"Error deleting local file: {str(e)}")
         return f"Error deleting local file: {str(e)}"
 
 def test_code_in_sandbox(code):
@@ -52,11 +61,15 @@ def test_code_in_sandbox(code):
             timeout=5
         )
         if result.stderr:
+            logging.error(f"Code test failed: {result.stderr}")
             return f"Test failed: {result.stderr}"
+        logging.info("Code test passed successfully")
         return "Test passed: Code executed successfully."
     except subprocess.TimeoutExpired:
+        logging.error("Code test failed: Execution timed out after 5 seconds")
         return "Test failed: Code execution timed out after 5 seconds."
     except Exception as e:
+        logging.error(f"Code test failed: {str(e)}")
         return f"Test failed: {str(e)}"
     finally:
         # Clean up the temporary file

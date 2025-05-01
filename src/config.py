@@ -1,5 +1,9 @@
 import json
 import os
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG, filename="billy.log", format="%(asctime)s %(levelname)s:%(message)s")
 
 class Config:
     """Application configuration."""
@@ -11,9 +15,14 @@ class Config:
 
     def load_config(self):
         """Load configuration from config.json."""
-        with open("src/config.json", "r") as config_file:
-            config = json.load(config_file)
-        self.TONE = config["tone"]
+        try:
+            with open("src/config.json", "r") as config_file:
+                config = json.load(config_file)
+            self.TONE = config["tone"]
+            logging.info(f"Loaded configuration: TONE={self.TONE}")
+        except Exception as e:
+            logging.error(f"Error loading config.json: {str(e)}")
+            self.TONE = "casual"  # Default tone
         self.load_connectors()
 
     def load_connectors(self):
@@ -29,9 +38,14 @@ class Config:
         self.NEXTCLOUD_USERNAME = self.connectors.get("nextcloud", {}).get("username", "")
         self.NEXTCLOUD_PASSWORD = self.connectors.get("nextcloud", {}).get("password", "")
         self.GITHUB_TOKEN = self.connectors.get("github", {}).get("api_key", "")
+        logging.info("Loaded connectors from database")
 
     def save_config(self):
         """Save configuration to config.json."""
         config = {"tone": self.TONE}
-        with open("src/config.json", "w") as config_file:
-            json.dump(config, config_file, indent=4)
+        try:
+            with open("src/config.json", "w") as config_file:
+                json.dump(config, config_file, indent=4)
+            logging.info("Saved configuration to config.json")
+        except Exception as e:
+            logging.error(f"Error saving config.json: {str(e)}")
