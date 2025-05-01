@@ -2,3 +2,4 @@ requests
 googlesearch-python
 googlesearch-python
 flask
+PyGithub
