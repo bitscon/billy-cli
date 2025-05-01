@@ -5,6 +5,7 @@ import subprocess
 import sqlite3
 from datetime import datetime
 from googlesearch import search
+from github import Github
 from flask import Flask, request, render_template, jsonify, redirect, url_for
 from xml.etree import ElementTree as ET
 
@@ -45,6 +46,9 @@ connectors = load_connectors()
 NEXTCLOUD_URL = connectors.get("nextcloud", {}).get("url", "")
 NEXTCLOUD_USERNAME = connectors.get("nextcloud", {}).get("username", "")
 NEXTCLOUD_PASSWORD = connectors.get("nextcloud", {}).get("password", "")
+GITHUB_TOKEN = connectors.get("github", {}).get("api_key", "")
+g = Github(GITHUB_TOKEN) if GITHUB_TOKEN else None
+REPO_NAME = "bitscon/billy"
 
 def load_memory():
     conn = get_db_connection()
@@ -76,6 +80,125 @@ def get_memory_context(category=None):
             if "tool_code" in entry and "tool_result" in entry and entry["tool_code"] and entry["tool_result"]:
                 context += f"[Tool] Code: {entry['tool_code']}\n[Tool] Result: {entry['tool_result']}\n"
     return context if context != "\nPast interactions:\n" else f"No past interactions for category '{category}'."
+
+def save_learning_entry(prompt, response, error, success, feedback):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO learning (prompt, response, error, success, feedback, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (prompt, response, error, success, feedback, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    conn.commit()
+    conn.close()
+
+def analyze_common_errors():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT error, COUNT(*) as count FROM learning WHERE error IS NOT NULL GROUP BY error ORDER BY count DESC LIMIT 3")
+    rows = cursor.fetchall()
+    conn.close()
+    if not rows:
+        return "No common errors found in past executions."
+    common_errors = "\n".join([f"Error: {row['error']} (occurred {row['count']} times)" for row in rows])
+    return f"Common errors in past executions:\n{common_errors}"
+
+def get_repo_contents(repo, path=""):
+    """Recursively fetch all files and their contents from the GitHub repository."""
+    if not g:
+        return "GitHub API token not configured. Please set it in the admin panel at /admin."
+    try:
+        contents = repo.get_contents(path)
+        result = []
+        for content in contents:
+            if content.type == "dir":
+                # Recursively fetch contents of directories
+                result.extend(get_repo_contents(repo, content.path))
+            else:
+                try:
+                    # Fetch file content
+                    file_content = content.decoded_content.decode()
+                    result.append({
+                        "path": content.path,
+                        "content": file_content
+                    })
+                except Exception as e:
+                    result.append({
+                        "path": content.path,
+                        "content": f"Error fetching file content: {str(e)}"
+                    })
+        return result
+    except Exception as e:
+        return f"Error fetching repository contents: {str(e)}"
+
+def get_own_code():
+    """Fetch all files in the repository and return their contents."""
+    if not g:
+        return "GitHub API token not configured. Please set it in the admin panel at /admin."
+    try:
+        repo = g.get_repo(REPO_NAME)
+        files = get_repo_contents(repo)
+        if isinstance(files, str):
+            return files  # Error message
+        # Format the output for display
+        output = "Here are the contents of my repository:\n"
+        for file in files:
+            output += f"\nFile: {file['path']}\n```python\n{file['content']}\n```"
+        return output
+    except Exception as e:
+        return f"Error fetching code from GitHub: {str(e)}"
+
+def create_file_in_repo(file_path, content, commit_message="Created file via Billy"):
+    """Create a file in the GitHub repository."""
+    if not g:
+        return "GitHub API token not configured. Please set it in the admin panel at /admin."
+    try:
+        repo = g.get_repo(REPO_NAME)
+        repo.create_file(file_path, commit_message, content)
+        return f"Successfully created {file_path} in the repository."
+    except Exception as e:
+        return f"Error creating file in GitHub: {str(e)}"
+
+def update_file_in_repo(file_path, content, commit_message="Updated file via Billy"):
+    """Update a file in the GitHub repository."""
+    if not g:
+        return "GitHub API token not configured. Please set it in the admin panel at /admin."
+    try:
+        repo = g.get_repo(REPO_NAME)
+        contents = repo.get_contents(file_path)
+        repo.update_file(file_path, commit_message, content, contents.sha)
+        return f"Successfully updated {file_path} in the repository."
+    except Exception as e:
+        return f"Error updating file in GitHub: {str(e)}"
+
+def delete_file_in_repo(file_path, commit_message="Deleted file via Billy"):
+    """Delete a file in the GitHub repository."""
+    if not g:
+        return "GitHub API token not configured. Please set it in the admin panel at /admin."
+    try:
+        repo = g.get_repo(REPO_NAME)
+        contents = repo.get_contents(file_path)
+        repo.delete_file(file_path, commit_message, contents.sha)
+        return f"Successfully deleted {file_path} from the repository."
+    except Exception as e:
+        return f"Error deleting file in GitHub: {str(e)}"
+
+def analyze_repo_for_improvements():
+    """Analyze the repository and suggest improvements (placeholder for future autonomy)."""
+    if not g:
+        return "GitHub API token not configured. Please set it in the admin panel at /admin."
+    try:
+        repo = g.get_repo(REPO_NAME)
+        files = get_repo_contents(repo)
+        if isinstance(files, str):
+            return files  # Error message
+        # Basic analysis: Check for missing README.md as an example
+        has_readme = any(file["path"].lower() == "readme.md" for file in files)
+        suggestions = []
+        if not has_readme:
+            suggestions.append("I noticed there's no README.md in the repository. Adding one could help document the project. Would you like me to create a README.md with a basic description?")
+        return "\n".join(suggestions) if suggestions else "No immediate improvements suggested for the repository."
+    except Exception as e:
+        return f"Error analyzing repository: {str(e)}"
 
 def save_documentation(title, content, source, url=None):
     conn = get_db_connection()
@@ -201,15 +324,21 @@ def execute_python_code(code):
             timeout=5  # Timeout handled by subprocess
         )
         if result.stderr:
+            # Log the error in the learning table
+            save_learning_entry("Code execution", code, result.stderr, False, "Execution failed")
             # If there's an error, query Ollama for a fix
             error_message = result.stderr
             debug_prompt = f"The following Python code failed with this error:\n\nCode:\n```python\n{code}\n```\n\nError:\n{error_message}\n\nPlease analyze the error, explain why it occurred, and suggest a corrected version of the code."
             fix_suggestion = query_ollama(debug_prompt)
             return f"Error: {error_message}\n\nDebug Suggestion:\n{fix_suggestion}"
+        # Log successful execution
+        save_learning_entry("Code execution", code, None, True, "Execution succeeded")
         return result.stdout.strip()
     except subprocess.TimeoutExpired:
+        save_learning_entry("Code execution", code, "Timeout", False, "Execution timed out")
         return "Error: Code execution timed out after 5 seconds."
     except Exception as e:
+        save_learning_entry("Code execution", code, str(e), False, "Execution failed")
         return f"Error: {str(e)}"
     finally:
         # Clean up the temporary file
@@ -252,6 +381,32 @@ def chat():
             last_code = code
             last_execution_result = execution_result
             category = "coding"
+        elif user_input.lower() == "analyze my errors":
+            response = analyze_common_errors()
+            category = "learning"
+        elif user_input.lower() == "show my code":
+            response = get_own_code()
+            category = "self-awareness"
+        elif user_input.lower() == "analyze my repo":
+            response = analyze_repo_for_improvements()
+            category = "self-awareness"
+        elif user_input.lower().startswith("create file "):
+            file_path = user_input[len("create file "):].strip()
+            content = "This is a new file created by Billy."
+            response = create_file_in_repo(file_path, content, f"Created {file_path} via Billy")
+            category = "repo-management"
+        elif user_input.lower().startswith("update file "):
+            parts = user_input[len("update file "):].strip().split(" with content ")
+            if len(parts) != 2:
+                response = "Please use the format: 'update file <file_path> with content <content>'"
+            else:
+                file_path, content = parts
+                response = update_file_in_repo(file_path, content, f"Updated {file_path} via Billy")
+            category = "repo-management"
+        elif user_input.lower().startswith("delete file "):
+            file_path = user_input[len("delete file "):].strip()
+            response = delete_file_in_repo(file_path, f"Deleted {file_path} via Billy")
+            category = "repo-management"
         else:
             category = "general"
             if "code" in user_input.lower() or "write a" in user_input.lower():
