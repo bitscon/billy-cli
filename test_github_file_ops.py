@@ -1,4 +1,4 @@
-from src.billy import create_file_with_test, update_file_with_test, delete_file_with_commit
+from src.file_manager import create_file_with_test, update_file_with_test, delete_file_with_commit
 
 # Test creating a file
 create_result = create_file_with_test("test_file.txt", "This is a test file created by Billy.", "Test creation by Billy")

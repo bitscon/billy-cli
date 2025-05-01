@@ -1,463 +1,13 @@
-import requests
-import json
-import os
-import subprocess
-import sqlite3
-from datetime import datetime
-from googlesearch import search
-from github import Github
 from flask import Flask, request, render_template, jsonify, redirect, url_for
-from xml.etree import ElementTree as ET
+from config import Config
+from database import load_memory, save_memory, analyze_common_errors
+from github_manager import get_local_repo_contents, analyze_repo_for_improvements
+from file_manager import create_file_with_test, update_file_with_test, delete_file_with_commit
+from web_search import web_search
+from ollama import query_ollama
 
 app = Flask(__name__)
-
-# Database connection
-def get_db_connection():
-    conn = sqlite3.connect("/home/billybs/Projects/billy/db/billy.db")
-    conn.row_factory = sqlite3.Row
-    return conn
-
-# Load connectors from database
-def load_connectors():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM connectors")
-    rows = cursor.fetchall()
-    conn.close()
-    connectors = {}
-    for row in rows:
-        connectors[row["name"]] = dict(row)
-    return connectors
-
-# Load configuration
-def load_config():
-    with open("src/config.json", "r") as config_file:
-        return json.load(config_file)
-
-def save_config(config):
-    with open("src/config.json", "w") as config_file:
-        json.dump(config, config_file, indent=4)
-
-config = load_config()
-TONE = config["tone"]
-
-# Load connectors
-connectors = load_connectors()
-NEXTCLOUD_URL = connectors.get("nextcloud", {}).get("url", "")
-NEXTCLOUD_USERNAME = connectors.get("nextcloud", {}).get("username", "")
-NEXTCLOUD_PASSWORD = connectors.get("nextcloud", {}).get("password", "")
-GITHUB_TOKEN = connectors.get("github", {}).get("api_key", "")
-g = Github(GITHUB_TOKEN) if GITHUB_TOKEN else None
-REPO_NAME = "bitscon/billy"
-REPO_URL = f"https://{GITHUB_TOKEN}@github.com/{REPO_NAME}.git"
-LOCAL_REPO_PATH = "/home/billybs/Projects/billy-local-repo"
-
-def load_memory():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM memory")
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
-
-def save_memory(prompt, response, category="general", tool_code=None, tool_result=None):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO memory (prompt, response, category, tool_code, tool_result, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (prompt, response, category, tool_code, tool_result, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-    conn.commit()
-    conn.close()
-
-def get_memory_context(category=None):
-    memory = load_memory()
-    if not memory:
-        return "No past interactions."
-    context = "\nPast interactions:\n"
-    for entry in memory:
-        entry_category = entry.get("category", "general")
-        if category is None or entry_category == category:
-            context += f"[{entry_category}] User: {entry['prompt']}\nBilly: {entry['response']}\n"
-            if "tool_code" in entry and "tool_result" in entry and entry["tool_code"] and entry["tool_result"]:
-                context += f"[Tool] Code: {entry['tool_code']}\n[Tool] Result: {entry['tool_result']}\n"
-    return context if context != "\nPast interactions:\n" else f"No past interactions for category '{category}'."
-
-def save_learning_entry(prompt, response, error, success, feedback):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO learning (prompt, response, error, success, feedback, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (prompt, response, error, success, feedback, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-    conn.commit()
-    conn.close()
-
-def analyze_common_errors():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT error, COUNT(*) as count FROM learning WHERE error IS NOT NULL GROUP BY error ORDER BY count DESC LIMIT 3")
-    rows = cursor.fetchall()
-    conn.close()
-    if not rows:
-        return "No common errors found in past executions."
-    common_errors = "\n".join([f"Error: {row['error']} (occurred {row['count']} times)" for row in rows])
-    return f"Common errors in past executions:\n{common_errors}"
-
-def ensure_local_repo():
-    """Ensure the local repository is cloned and up-to-date."""
-    if not os.path.exists(LOCAL_REPO_PATH):
-        os.makedirs(LOCAL_REPO_PATH, exist_ok=True)
-        try:
-            subprocess.run(
-                ["git", "clone", REPO_URL, LOCAL_REPO_PATH],
-                check=True,
-                capture_output=True,
-                text=True
-            )
-            return "Cloned repository to local path."
-        except subprocess.CalledProcessError as e:
-            return f"Error cloning repository: {e.stderr}"
-    else:
-        # Pull the latest changes
-        try:
-            subprocess.run(
-                ["git", "-C", LOCAL_REPO_PATH, "pull"],
-                check=True,
-                capture_output=True,
-                text=True
-            )
-            return "Pulled latest changes from repository."
-        except subprocess.CalledProcessError as e:
-            return f"Error pulling repository: {e.stderr}"
-
-def get_local_repo_contents(path=LOCAL_REPO_PATH):
-    """Recursively fetch all files and their contents from the local repository."""
-    try:
-        result = []
-        for root, dirs, files in os.walk(path):
-            for file in files:
-                file_path = os.path.join(root, file)
-                relative_path = os.path.relpath(file_path, LOCAL_REPO_PATH)
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        content = f.read()
-                    result.append({
-                        "path": relative_path,
-                        "content": content
-                    })
-                except Exception as e:
-                    result.append({
-                        "path": relative_path,
-                        "content": f"Error reading file content: {str(e)}"
-                    })
-        return result
-    except Exception as e:
-        return f"Error reading local repository contents: {str(e)}"
-
-def get_own_code():
-    """Fetch all files in the local repository and return their contents."""
-    ensure_local_repo()
-    files = get_local_repo_contents()
-    if isinstance(files, str):
-        return files  # Error message
-    # Format the output for display
-    output = "Here are the contents of my local repository:\n"
-    for file in files:
-        output += f"\nFile: {file['path']}\n```python\n{file['content']}\n```"
-    return output
-
-def create_local_file(file_path, content):
-    """Create or update a file in the local repository."""
-    ensure_local_repo()
-    local_file_path = os.path.join(LOCAL_REPO_PATH, file_path)
-    try:
-        os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
-        with open(local_file_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        return f"Successfully created/updated {file_path} locally."
-    except Exception as e:
-        return f"Error creating/updating local file: {str(e)}"
-
-def delete_local_file(file_path):
-    """Delete a file in the local repository."""
-    ensure_local_repo()
-    local_file_path = os.path.join(LOCAL_REPO_PATH, file_path)
-    try:
-        if os.path.exists(local_file_path):
-            os.remove(local_file_path)
-            return f"Successfully deleted {file_path} locally."
-        return f"File {file_path} does not exist locally."
-    except Exception as e:
-        return f"Error deleting local file: {str(e)}"
-
-def commit_and_push_changes(commit_message="Changes by Billy"):
-    """Commit and push changes to the remote repository."""
-    ensure_local_repo()
-    try:
-        # Stage all changes
-        subprocess.run(
-            ["git", "-C", LOCAL_REPO_PATH, "add", "."],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-        # Commit changes
-        subprocess.run(
-            ["git", "-C", LOCAL_REPO_PATH, "commit", "-m", commit_message],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-        # Push to GitHub
-        subprocess.run(
-            ["git", "-C", LOCAL_REPO_PATH, "push", "origin", "main"],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-        return "Successfully committed and pushed changes to GitHub."
-    except subprocess.CalledProcessError as e:
-        return f"Error committing/pushing changes: {e.stderr}"
-
-def test_code_in_sandbox(code):
-    """Test the code in the Docker sandbox."""
-    try:
-        # Write the code to a temporary file
-        with open("/tmp/temp_code.py", "w") as f:
-            f.write(code)
-        # Run the code in the Docker container
-        result = subprocess.run(
-            [
-                "docker", "run", "--rm",
-                "-v", "/tmp/temp_code.py:/app/temp_code.py",
-                "--security-opt", "no-new-privileges",
-                "--cap-drop", "ALL",
-                "--network", "none",
-                "billy-python-sandbox",
-                "python", "temp_code.py"
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        if result.stderr:
-            return f"Test failed: {result.stderr}"
-        return "Test passed: Code executed successfully."
-    except subprocess.TimeoutExpired:
-        return "Test failed: Code execution timed out after 5 seconds."
-    except Exception as e:
-        return f"Test failed: {str(e)}"
-    finally:
-        # Clean up the temporary file
-        if os.path.exists("/tmp/temp_code.py"):
-            os.remove("/tmp/temp_code.py")
-
-def create_file_with_test(file_path, content, commit_message="Created file via Billy"):
-    """Create a file locally, test it if it's Python code, and push to GitHub if tests pass."""
-    # Create or update the file locally
-    result = create_local_file(file_path, content)
-    if "Error" in result:
-        return result
-
-    # If the file is a Python file, test it in the sandbox
-    if file_path.endswith(".py"):
-        test_result = test_code_in_sandbox(content)
-        if "Test failed" in test_result:
-            return f"Failed to create {file_path}: {test_result}"
-    
-    # Commit and push changes
-    commit_result = commit_and_push_changes(commit_message)
-    return f"{result}\n{commit_result}"
-
-def update_file_with_test(file_path, content, commit_message="Updated file via Billy"):
-    """Update a file locally, test it if it's Python code, and push to GitHub if tests pass."""
-    # Update the file locally
-    result = create_local_file(file_path, content)
-    if "Error" in result:
-        return result
-
-    # If the file is a Python file, test it in the sandbox
-    if file_path.endswith(".py"):
-        test_result = test_code_in_sandbox(content)
-        if "Test failed" in test_result:
-            return f"Failed to update {file_path}: {test_result}"
-    
-    # Commit and push changes
-    commit_result = commit_and_push_changes(commit_message)
-    return f"{result}\n{commit_result}"
-
-def delete_file_with_commit(file_path, commit_message="Deleted file via Billy"):
-    """Delete a file locally and push the deletion to GitHub."""
-    # Delete the file locally
-    result = delete_local_file(file_path)
-    if "Error" in result:
-        return result
-    
-    # Commit and push changes
-    commit_result = commit_and_push_changes(commit_message)
-    return f"{result}\n{commit_result}"
-
-def analyze_repo_for_improvements():
-    """Analyze the repository and suggest improvements (placeholder for future autonomy)."""
-    ensure_local_repo()
-    try:
-        files = get_local_repo_contents()
-        if isinstance(files, str):
-            return files  # Error message
-        # Basic analysis: Check for missing README.md as an example
-        has_readme = any(file["path"].lower() == "readme.md" for file in files)
-        suggestions = []
-        if not has_readme:
-            suggestions.append("I noticed there's no README.md in the repository. Adding one could help document the project. Would you like me to create a README.md with a basic description?")
-        return "\n".join(suggestions) if suggestions else "No immediate improvements suggested for the repository."
-    except Exception as e:
-        return f"Error analyzing repository: {str(e)}"
-
-def save_documentation(title, content, source, url=None):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO documentation (title, content, source, url, timestamp)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (title, content, source, url, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-    conn.commit()
-    conn.close()
-
-def get_documentation(query=None):
-    # First, try local database
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    if query:
-        cursor.execute("SELECT * FROM documentation WHERE content LIKE ?", (f"%{query}%",))
-    else:
-        cursor.execute("SELECT * FROM documentation")
-    rows = cursor.fetchall()
-    conn.close()
-    local_docs = [dict(row) for row in rows]
-
-    # Then, fetch from Nextcloud using WebDAV PROPFIND
-    if NEXTCLOUD_URL and NEXTCLOUD_USERNAME and NEXTCLOUD_PASSWORD:
-        try:
-            # Construct the WebDAV PROPFIND request
-            url = f"{NEXTCLOUD_URL}/remote.php/dav/files/{NEXTCLOUD_USERNAME}/"
-            headers = {
-                "Depth": "1",
-                "Content-Type": "application/xml"
-            }
-            body = '''
-            <?xml version="1.0" encoding="UTF-8"?>
-            <d:propfind xmlns:d="DAV:">
-                <d:prop>
-                    <d:displayname/>
-                    <d:resourcetype/>
-                </d:prop>
-            </d:propfind>
-            '''
-            response = requests.request(
-                "PROPFIND",
-                url,
-                auth=(NEXTCLOUD_USERNAME, NEXTCLOUD_PASSWORD),
-                headers=headers,
-                data=body
-            )
-            if response.status_code == 207:  # Multi-status response
-                # Parse the XML response
-                root = ET.fromstring(response.content)
-                ns = {"d": "DAV:"}
-                files = []
-                for resp in root.findall(".//d:response", ns):
-                    href = resp.find("d:href", ns).text
-                    displayname = resp.find(".//d:displayname", ns)
-                    resourcetype = resp.find(".//d:resourcetype", ns)
-                    # Skip if it's a collection (directory)
-                    if not resourcetype.find("d:collection", ns):
-                        name = displayname.text if displayname is not None else href.split("/")[-1]
-                        if query and query.lower() in name.lower():
-                            files.append({"title": name, "content": "Stored in Nextcloud", "source": "nextcloud", "url": href})
-                local_docs.extend(files)
-            else:
-                print(f"Nextcloud fetch failed: Status {response.status_code}")
-        except Exception as e:
-            print(f"Nextcloud fetch failed: {str(e)}")
-
-    return local_docs
-
-def web_search(query, num_results=3):
-    try:
-        results = []
-        for url in search(query, num_results=num_results):
-            results.append(url)
-            save_documentation(f"Web Search: {query}", f"Found at {url}", "online", url)
-        return "\n".join([f"- {url}" for url in results])
-    except Exception as e:
-        return f"Web search failed: {str(e)}"
-
-def query_ollama(prompt, include_memory=False, memory_category=None):
-    url = "http://localhost:11434/api/generate"
-    tone_instruction = f"Respond in a {TONE} tone."
-    memory_context = get_memory_context(memory_category) if include_memory else ""
-    doc_context = ""
-    docs = get_documentation(prompt)
-    if docs:
-        doc_context = "\nRelevant Documentation:\n" + "\n".join([f"{doc['title']}: {doc['content'][:200]}" for doc in docs])
-    full_prompt = f"{tone_instruction}\n{memory_context}\n{doc_context}\nUser: {prompt}"
-    
-    payload = {
-        "model": "mistral:7b-instruct-v0.3-q4_0",
-        "prompt": full_prompt,
-        "stream": False
-    }
-    try:
-        response = requests.post(url, json=payload)
-        if response.status_code == 200:
-            return json.loads(response.text)["response"]
-        else:
-            return f"Error: {response.status_code} - {response.text}"
-    except requests.exceptions.RequestException as e:
-        return f"Request failed: {str(e)}"
-
-def execute_python_code(code):
-    try:
-        # Write the code to a temporary file
-        with open("/tmp/temp_code.py", "w") as f:
-            f.write(code)
-        # Run the code in a Docker container with subprocess timeout
-        result = subprocess.run(
-            [
-                "docker", "run", "--rm",
-                "-v", "/tmp/temp_code.py:/app/temp_code.py",
-                "--security-opt", "no-new-privileges",
-                "--cap-drop", "ALL",
-                "--network", "none",
-                "billy-python-sandbox",
-                "python", "temp_code.py"
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5  # Timeout handled by subprocess
-        )
-        if result.stderr:
-            # Log the error in the learning table
-            save_learning_entry("Code execution", code, result.stderr, False, "Execution failed")
-            # If there's an error, query Ollama for a fix
-            error_message = result.stderr
-            debug_prompt = f"The following Python code failed with this error:\n\nCode:\n```python\n{code}\n```\n\nError:\n{error_message}\n\nPlease analyze the error, explain why it occurred, and suggest a corrected version of the code."
-            fix_suggestion = query_ollama(debug_prompt)
-            return f"Error: {error_message}\n\nDebug Suggestion:\n{fix_suggestion}"
-        # Log successful execution
-        save_learning_entry("Code execution", code, None, True, "Execution succeeded")
-        return result.stdout.strip()
-    except subprocess.TimeoutExpired:
-        save_learning_entry("Code execution", code, "Timeout", False, "Execution timed out")
-        return "Error: Code execution timed out after 5 seconds."
-    except Exception as e:
-        save_learning_entry("Code execution", code, str(e), False, "Execution failed")
-        return f"Error: {str(e)}"
-    finally:
-        # Clean up the temporary file
-        if os.path.exists("/tmp/temp_code.py"):
-            os.remove("/tmp/temp_code.py")
+config = Config()
 
 # Store the last executed code and result for potential saving
 last_code = None
@@ -465,7 +15,7 @@ last_execution_result = None
 
 @app.route("/", methods=["GET", "POST"])
 def chat():
-    global TONE, last_code, last_execution_result
+    global last_code, last_execution_result
     chat_history = []
     memory = load_memory()
     tools = [entry for entry in memory if entry.get("category") == "tool"]
@@ -476,19 +26,16 @@ def chat():
     if request.method == "POST":
         user_input = request.form["prompt"].strip()
         if not user_input:
-            return render_template("index.html", chat_history=chat_history, tone=TONE, tools=tools)
+            return render_template("index.html", chat_history=chat_history, tone=config.TONE, tools=tools)
 
-        if "save this tool" in user_input.lower():
+        if user_input.lower() == "save this tool":
             if last_code and last_execution_result:
                 save_memory("Saved tool", "Tool saved for future use.", "tool", last_code, last_execution_result)
                 response = "I’ve saved that tool in my toolbox for later!"
             else:
                 response = "I don’t have a recent tool to save. Ask me to write and run some code first!"
-            chat_history.append({"role": "user", "content": user_input})
-            chat_history.append({"role": "billy", "content": response})
-            return render_template("index.html", chat_history=chat_history, tone=TONE, tools=tools)
-
-        if user_input.lower().startswith("run this code:"):
+            category = "tool"
+        elif user_input.lower().startswith("run this code:"):
             code = user_input[14:].strip()
             execution_result = execute_python_code(code)
             response = f"Running saved code:\n```python\n{code}\n```\n\nExecution Result:\n{execution_result}"
@@ -574,7 +121,7 @@ def chat():
         chat_history.append({"role": "user", "content": user_input})
         chat_history.append({"role": "billy", "content": response})
 
-    return render_template("index.html", chat_history=chat_history, tone=TONE, tools=tools)
+    return render_template("index.html", chat_history=chat_history, tone=config.TONE, tools=tools)
 
 @app.route("/admin.html", methods=["GET"])
 def admin_redirect():
@@ -582,11 +129,13 @@ def admin_redirect():
 
 @app.route("/admin", methods=["GET"])
 def admin():
+    from database import get_db_connection
     connectors_list = load_connectors()
     return render_template("admin.html", connectors=connectors_list.values())
 
 @app.route("/admin/update_connector", methods=["POST"])
 def update_connector():
+    from database import get_db_connection
     data = request.get_json()
     id = data.get("id")
     url = data.get("url")
@@ -606,14 +155,12 @@ def update_connector():
 
 @app.route("/update_tone", methods=["POST"])
 def update_tone():
-    global TONE
+    global config
     data = request.get_json()
     new_tone = data.get("tone")
     if new_tone in ["casual", "formal", "humorous"]:
-        TONE = new_tone
-        config = load_config()
-        config["tone"] = new_tone
-        save_config(config)
+        config.TONE = new_tone
+        config.save_config()
         return jsonify({"message": f"Tone updated to {new_tone}"}), 200
     return jsonify({"message": "Invalid tone"}), 400
 
