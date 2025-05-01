@@ -1,7 +1,9 @@
 import logging
+import subprocess
+import os
 from flask import Flask, request, render_template, jsonify, redirect, url_for, session
 from config import Config
-from database import load_memory, save_memory, analyze_common_errors
+from database import load_memory, save_memory, analyze_common_errors, get_memory_context, prune_old_data
 from github_manager import get_local_repo_contents, analyze_repo_for_improvements, get_own_code
 from file_manager import create_file_with_test, update_file_with_test, delete_file_with_commit
 from web_search import web_search
@@ -66,9 +68,12 @@ def execute_python_code(code):
             os.remove("/tmp/temp_code.py")
 
 def get_recent_conversation(count=3, filter_criteria=None):
-    """Get the last 'count' user inputs from session, optionally filtered by criteria."""
-    recent_inputs = session.get("recent_inputs", [])
-    logging.debug(f"Recent inputs from session: {recent_inputs}")
+    """Get the last 'count' user inputs from the database, optionally filtered by criteria."""
+    memory = load_memory(limit=count + 1)  # +1 to exclude the current request
+    if not memory:
+        return "I don't have any recent conversation to recall. What's on your mind?"
+    
+    recent_inputs = [entry["prompt"] for entry in memory[:-1]][-count:]  # Exclude the current request
     if not recent_inputs:
         return "I don't have any recent conversation to recall. What's on your mind?"
     
@@ -78,19 +83,70 @@ def get_recent_conversation(count=3, filter_criteria=None):
             return "I couldn't find any requests matching your criteria in our recent chat history."
         return "\n".join([f"- {input}" for input in filtered_inputs[-count:]])
     
-    return "\n".join([f"- {input}" for input in recent_inputs[-count:]])
+    return "\n".join([f"- {input}" for input in recent_inputs])
+
+def detect_intent_and_extract_params(user_input, recent_inputs):
+    """Use the LLM to detect the intent of the user input and extract parameters."""
+    # Include recent conversation context in the prompt
+    recent_context = "\n".join([f"- {input}" for input in recent_inputs[:-1]]) if recent_inputs else "No previous conversation."
+    intent_prompt = (
+        "Classify the intent of the following user input and extract relevant parameters, considering the recent conversation context. "
+        "Recent conversation:\n"
+        f"{recent_context}\n\n"
+        "Return the result strictly in the format: '<intent>:<parameters>'. "
+        "For example: 'recall_conversation:1:joke,funny' or 'general:'. "
+        "If the intent is a recall request (e.g., asking about past conversation, what was asked, or history), use 'recall_conversation'. "
+        "Possible intents include: "
+        "- recall_conversation (parameters: count, criteria1,criteria2,...; e.g., '1:joke,funny' for recalling 1 entry related to jokes or funny topics)"
+        "- save_tool (parameters: none)"
+        "- run_code (parameters: code)"
+        "- analyze_errors (parameters: none)"
+        "- show_code (parameters: none)"
+        "- analyze_repo (parameters: none)"
+        "- create_file (parameters: file_path,content)"
+        "- update_file (parameters: file_path,content)"
+        "- delete_file (parameters: file_path)"
+        "- web_search (parameters: query)"
+        "- general (parameters: none)"
+        "If the intent doesn't match any of the above, use 'general'. "
+        "Ensure the output format is correct and avoid additional text. "
+        f"Input: '{user_input}'"
+    )
+    intent_response = query_ollama(intent_prompt)
+    logging.debug(f"Intent response from LLM: {intent_response}")
+    
+    # Fallback if LLM fails to provide a valid response
+    if not intent_response or ":" not in intent_response:
+        logging.warning(f"LLM intent detection failed, falling back to 'general' intent: {intent_response}")
+        return "general", []
+
+    # Parse the response
+    parts = intent_response.split(":", 1)
+    intent = parts[0].strip()
+    params = parts[1].split(",") if len(parts) > 1 and parts[1] else []
+    params = [param.strip() for param in params if param.strip()]  # Clean up parameters
+
+    # Fallback for recall requests if LLM misclassifies
+    user_input_lower = user_input.lower()
+    recall_keywords = ["what did i ask", "last thing i asked", "recall our conversation", "look back in our chat", "recently asked"]
+    if any(keyword in user_input_lower for keyword in recall_keywords) and intent != "recall_conversation":
+        logging.warning(f"LLM missed recall intent, falling back to recall_conversation: {user_input}")
+        intent = "recall_conversation"
+        # Default to recalling 1 entry, look for "funny" or "joke" in the input as criteria
+        count = "3" if "last 3" in user_input_lower else "1"
+        criteria = []
+        if "funny" in user_input_lower or "joke" in user_input_lower:
+            criteria = ["funny", "joke"]
+        params = [count] + criteria
+
+    return intent, params
 
 @app.route("/", methods=["GET", "POST"])
 def chat():
     global last_code, last_execution_result
 
-    # Initialize session if not already set
-    if "recent_inputs" not in session:
-        session["recent_inputs"] = []
-        logging.debug("Initialized session['recent_inputs'] as empty list")
-
     chat_history = []
-    memory = load_memory()
+    memory = load_memory(limit=50)  # Limit to recent entries for display
     tools = [entry for entry in memory if entry.get("category") == "tool"]
     for entry in memory:
         chat_history.append({"role": "user", "content": entry["prompt"]})
@@ -101,40 +157,26 @@ def chat():
         if not user_input:
             return render_template("index.html", chat_history=chat_history, tone=config.TONE, tools=tools)
 
-        # Store the user input in session
-        recent_inputs = session.get("recent_inputs", [])
-        recent_inputs.append(user_input)
-        if len(recent_inputs) > 3:
-            recent_inputs.pop(0)
-        session["recent_inputs"] = recent_inputs
-        logging.debug(f"Updated session['recent_inputs']: {session['recent_inputs']}")
+        # Get recent inputs from the database
+        recent_inputs = [entry["prompt"] for entry in memory]
 
         # Initialize response and category
         response = None
         category = "general"
 
-        # Use LLM to detect intent
-        user_input_lower = user_input.lower()
-        recall_intent_prompt = (
-            f"Determine if the following user input is a request to recall recent conversation history. "
-            f"If it is, specify the number of items to recall (default to 1 if not specified) and any specific criteria (e.g., 'funny', 'joke'). "
-            f"Return the result in the format: 'recall:<number>:<criteria1>,<criteria2>'. "
-            f"If it's not a recall request, return 'no_recall'. Input: '{user_input}'"
-        )
-        intent_response = query_ollama(recall_intent_prompt)
-        logging.debug(f"Intent response from LLM: {intent_response}")
+        # Detect intent using the LLM
+        intent, params = detect_intent_and_extract_params(user_input, recent_inputs)
 
-        if intent_response.startswith("recall:"):
-            parts = intent_response.split(":")
-            recall_count = int(parts[1]) if parts[1].isdigit() else 1
-            criteria = parts[2].split(",") if len(parts) > 2 and parts[2] else None
+        if intent == "recall_conversation":
+            count = int(params[0]) if params and params[0].isdigit() else 1
+            criteria = params[1:] if len(params) > 1 else None
             if criteria and criteria[0]:
-                response = get_recent_conversation(recall_count, criteria)
+                response = get_recent_conversation(count, criteria)
             else:
-                response = get_recent_conversation(recall_count)
+                response = get_recent_conversation(count)
             category = "memory"
 
-        elif user_input_lower == "save this tool":
+        elif intent == "save_tool":
             if last_code and last_execution_result:
                 save_memory("Saved tool", "Tool saved for future use.", "tool", last_code, last_execution_result)
                 response = "I’ve saved that tool in my toolbox for later!"
@@ -142,80 +184,85 @@ def chat():
                 response = "I don’t have a recent tool to save. Ask me to write and run some code first!"
             category = "tool"
 
-        elif user_input_lower.startswith("run this code:"):
-            code = user_input[14:].strip()
-            execution_result = execute_python_code(code)
-            response = f"Running saved code:\n```python\n{code}\n```\n\nExecution Result:\n{execution_result}"
-            last_code = code
-            last_execution_result = execution_result
+        elif intent == "run_code":
+            if params:
+                code = params[0]
+                execution_result = execute_python_code(code)
+                response = f"Running saved code:\n```python\n{code}\n```\n\nExecution Result:\n{execution_result}"
+                last_code = code
+                last_execution_result = execution_result
+            else:
+                response = "I couldn't find any code to run in your request. Please provide the code you'd like to execute."
             category = "coding"
 
-        elif user_input_lower == "analyze my errors":
+        elif intent == "analyze_errors":
             response = analyze_common_errors()
             category = "learning"
 
-        elif user_input_lower == "show my code":
+        elif intent == "show_code":
             response = get_own_code()
             category = "self-awareness"
 
-        elif user_input_lower == "analyze my repo":
+        elif intent == "analyze_repo":
             response = analyze_repo_for_improvements()
             category = "self-awareness"
 
-        elif user_input_lower.startswith("create file "):
-            file_path = user_input[len("create file "):].strip()
-            content = "This is a new file created by Billy."
-            response = create_file_with_test(file_path, content, f"Created {file_path} via Billy")
-            category = "repo-management"
-
-        elif user_input_lower.startswith("update file "):
-            parts = user_input[len("update file "):].strip().split(" with content ")
-            if len(parts) != 2:
-                response = "Please use the format: 'update file <file_path> with content <content>'"
+        elif intent == "create_file":
+            if len(params) >= 2:
+                file_path, content = params[0], params[1]
+                response = create_file_with_test(file_path, content, f"Created {file_path} via Billy")
             else:
-                file_path, content = parts
-                response = update_file_with_test(file_path, content, f"Updated {file_path} via Billy")
+                response = "Please provide both a file path and content to create a file (e.g., 'create file test.txt with content Hello World')."
             category = "repo-management"
 
-        elif user_input_lower.startswith("delete file "):
-            file_path = user_input[len("delete file "):].strip()
-            response = delete_file_with_commit(file_path, f"Deleted {file_path} via Billy")
+        elif intent == "update_file":
+            if len(params) >= 2:
+                file_path, content = params[0], params[1]
+                response = update_file_with_test(file_path, content, f"Updated {file_path} via Billy")
+            else:
+                response = "Please provide both a file path and content to update a file (e.g., 'update file test.txt with content Updated content')."
             category = "repo-management"
+
+        elif intent == "delete_file":
+            if params:
+                file_path = params[0]
+                response = delete_file_with_commit(file_path, f"Deleted {file_path} via Billy")
+            else:
+                response = "Please provide a file path to delete (e.g., 'delete file test.txt')."
+            category = "repo-management"
+
+        elif intent == "web_search":
+            if params:
+                search_query = params[0]
+                web_results = web_search(search_query)
+                user_input = f"{user_input}\nWeb search results:\n{web_results}"
+                response = query_ollama(user_input)
+            else:
+                response = "I couldn't identify a search query in your request. Please specify what you'd like to search for."
+            category = "research"
 
         else:
-            if "code" in user_input_lower or "write a" in user_input_lower:
-                category = "coding"
-            elif "search for" in user_input_lower:
-                category = "research"
-
-            include_memory = False
+            # General intent: let the LLM handle the response
+            include_memory = "recall" in user_input.lower()
             memory_category = None
-            if "recall" in user_input_lower:
-                include_memory = True
-                if "coding" in user_input_lower:
+            if include_memory:
+                if "coding" in user_input.lower():
                     memory_category = "coding"
-                elif "research" in user_input_lower:
+                elif "research" in user_input.lower():
                     memory_category = "research"
-                elif "tool" in user_input_lower:
+                elif "tool" in user_input.lower():
                     memory_category = "tool"
                 user_input = user_input.replace("recall coding", "").replace("recall research", "").replace("recall tool", "").replace("recall past", "").strip()
 
-            web_results = ""
-            if "search for" in user_input_lower:
-                search_query = user_input.replace("search for", "").strip()
-                web_results = web_search(search_query)
-                user_input = f"{user_input}\nWeb search results:\n{web_results}"
-
             response = query_ollama(user_input, include_memory, memory_category)
 
-            execution_result = ""
-            if category == "coding" and "```python" in response:
-                # Introduce a deliberate syntax error if requested
+            # Check if the response contains Python code that might need execution
+            if "```python" in response:
                 code_start = response.index("```python") + 9
                 code_end = response.index("```", code_start)
                 code = response[code_start:code_end].strip()
-                if "include a syntax error" in user_input_lower:
-                    # Introduce a missing colon after the function definition
+                if "include a syntax error" in user_input.lower():
+                    # Introduce a deliberate syntax error if requested
                     code_lines = code.split("\n")
                     if code_lines and "def " in code_lines[0]:
                         code_lines[0] = code_lines[0].replace("):", ")")  # Remove colon
@@ -228,12 +275,17 @@ def chat():
                 else:
                     last_code = None
                     last_execution_result = None
+            category = "coding" if "code" in user_input.lower() or "write a" in user_input.lower() else "general"
 
         # Save the conversation to memory
         save_memory(user_input, response, category)
 
         chat_history.append({"role": "user", "content": user_input})
         chat_history.append({"role": "billy", "content": response})
+
+        # Prune old data periodically (e.g., every 100 requests)
+        if len(chat_history) % 100 == 0:
+            prune_old_data()
 
     return render_template("index.html", chat_history=chat_history, tone=config.TONE, tools=tools)
 
