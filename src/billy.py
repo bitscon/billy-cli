@@ -39,6 +39,12 @@ def save_config(config):
 config = load_config()
 TONE = config["tone"]
 
+# Load connectors
+connectors = load_connectors()
+NEXTCLOUD_URL = connectors.get("nextcloud", {}).get("url", "")
+NEXTCLOUD_USERNAME = connectors.get("nextcloud", {}).get("username", "")
+NEXTCLOUD_PASSWORD = connectors.get("nextcloud", {}).get("password", "")
+
 def load_memory():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -70,11 +76,52 @@ def get_memory_context(category=None):
                 context += f"[Tool] Code: {entry['tool_code']}\n[Tool] Result: {entry['tool_result']}\n"
     return context if context != "\nPast interactions:\n" else f"No past interactions for category '{category}'."
 
+def save_documentation(title, content, source, url=None):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO documentation (title, content, source, url, timestamp)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (title, content, source, url, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    conn.commit()
+    conn.close()
+
+def get_documentation(query=None):
+    # First, try local database
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    if query:
+        cursor.execute("SELECT * FROM documentation WHERE content LIKE ?", (f"%{query}%",))
+    else:
+        cursor.execute("SELECT * FROM documentation")
+    rows = cursor.fetchall()
+    conn.close()
+    local_docs = [dict(row) for row in rows]
+
+    # Then, fetch from Nextcloud
+    if NEXTCLOUD_URL and NEXTCLOUD_USERNAME and NEXTCLOUD_PASSWORD:
+        try:
+            response = requests.get(
+                f"{NEXTCLOUD_URL}/remote.php/dav/files/{NEXTCLOUD_USERNAME}/",
+                auth=(NEXTCLOUD_USERNAME, NEXTCLOUD_PASSWORD),
+                headers={"Accept": "application/json"}
+            )
+            if response.status_code == 200:
+                files = response.json()
+                for file in files:
+                    if query and query.lower() in file["name"].lower():
+                        local_docs.append({"title": file["name"], "content": "Stored in Nextcloud", "source": "nextcloud", "url": file["href"]})
+        except Exception as e:
+            print(f"Nextcloud fetch failed: {str(e)}")
+
+    return local_docs
+
 def web_search(query, num_results=3):
     try:
         results = []
         for url in search(query, num_results=num_results):
             results.append(url)
+            save_documentation(f"Web Search: {query}", f"Found at {url}", "online", url)
         return "\n".join([f"- {url}" for url in results])
     except Exception as e:
         return f"Web search failed: {str(e)}"
@@ -83,7 +130,11 @@ def query_ollama(prompt, include_memory=False, memory_category=None):
     url = "http://localhost:11434/api/generate"
     tone_instruction = f"Respond in a {TONE} tone."
     memory_context = get_memory_context(memory_category) if include_memory else ""
-    full_prompt = f"{tone_instruction}\n{memory_context}\nUser: {prompt}"
+    doc_context = ""
+    docs = get_documentation(prompt)
+    if docs:
+        doc_context = "\nRelevant Documentation:\n" + "\n".join([f"{doc['title']}: {doc['content'][:200]}" for doc in docs])
+    full_prompt = f"{tone_instruction}\n{memory_context}\n{doc_context}\nUser: {prompt}"
     
     payload = {
         "model": "mistral:7b-instruct-v0.3-q4_0",
