@@ -74,12 +74,14 @@
               .then(data => {
                   if (data.message === "Tool deleted") {
                       location.reload();
+                  } else {
+                      alert("Error deleting tool: " + data.error);
                   }
               });
         }
 
         function reuseTool(code) {
-            document.getElementById('prompt').value = "Run this code: " + code.replace(/\\n/g, '\n');
+            document.getElementById('prompt').value = "Run this code:\n" + code.replace(/\\n/g, '\n');
         }
     </script>
 </body>
