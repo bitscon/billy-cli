@@ -176,6 +176,7 @@ def delete_file_in_repo(file_path, commit_message="Deleted file via Billy"):
         return "GitHub API token not configured. Please set it in the admin panel at /admin."
     try:
         repo = g.get_repo(REPO_NAME)
+        # Fetch the latest contents to get the current SHA
         contents = repo.get_contents(file_path)
         repo.delete_file(file_path, commit_message, contents.sha)
         return f"Successfully deleted {file_path} from the repository."
