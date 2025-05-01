@@ -15,6 +15,18 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+# Load connectors from database
+def load_connectors():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM connectors")
+    rows = cursor.fetchall()
+    conn.close()
+    connectors = {}
+    for row in rows:
+        connectors[row["name"]] = dict(row)
+    return connectors
+
 # Load configuration
 def load_config():
     with open("src/config.json", "r") as config_file:
@@ -190,6 +202,30 @@ def chat():
 
     return render_template("index.html", chat_history=chat_history, tone=TONE, tools=tools)
 
+@app.route("/admin", methods=["GET"])
+def admin():
+    connectors_list = load_connectors()
+    return render_template("admin.html", connectors=connectors_list.values())
+
+@app.route("/admin/update_connector", methods=["POST"])
+def update_connector():
+    data = request.get_json()
+    id = data.get("id")
+    url = data.get("url")
+    username = data.get("username")
+    password = data.get("password")
+    api_key = data.get("api_key")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        UPDATE connectors
+        SET url = ?, username = ?, password = ?, api_key = ?, timestamp = ?
+        WHERE id = ?
+    ''', (url, username, password, api_key, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), id))
+    conn.commit()
+    conn.close()
+    return jsonify({"message": "Connector updated"}), 200
+
 @app.route("/update_tone", methods=["POST"])
 def update_tone():
     global TONE
@@ -212,7 +248,6 @@ def delete_tool():
     if 0 <= index < len(tools):
         tool_to_delete = tools[index]
         memory.remove(tool_to_delete)
-        # Save the updated memory list back to the database
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM memory")  # Clear existing memory
