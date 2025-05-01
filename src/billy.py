@@ -5,7 +5,8 @@ import subprocess
 import sqlite3
 from datetime import datetime
 from googlesearch import search
-from flask import Flask, request, render_template, jsonify
+from flask import Flask, request, render_template, jsonify, redirect, url_for
+from xml.etree import ElementTree as ET
 
 app = Flask(__name__)
 
@@ -98,19 +99,48 @@ def get_documentation(query=None):
     conn.close()
     local_docs = [dict(row) for row in rows]
 
-    # Then, fetch from Nextcloud
+    # Then, fetch from Nextcloud using WebDAV PROPFIND
     if NEXTCLOUD_URL and NEXTCLOUD_USERNAME and NEXTCLOUD_PASSWORD:
         try:
-            response = requests.get(
-                f"{NEXTCLOUD_URL}/remote.php/dav/files/{NEXTCLOUD_USERNAME}/",
+            # Construct the WebDAV PROPFIND request
+            url = f"{NEXTCLOUD_URL}/remote.php/dav/files/{NEXTCLOUD_USERNAME}/"
+            headers = {
+                "Depth": "1",
+                "Content-Type": "application/xml"
+            }
+            body = '''
+            <?xml version="1.0" encoding="UTF-8"?>
+            <d:propfind xmlns:d="DAV:">
+                <d:prop>
+                    <d:displayname/>
+                    <d:resourcetype/>
+                </d:prop>
+            </d:propfind>
+            '''
+            response = requests.request(
+                "PROPFIND",
+                url,
                 auth=(NEXTCLOUD_USERNAME, NEXTCLOUD_PASSWORD),
-                headers={"Accept": "application/json"}
+                headers=headers,
+                data=body
             )
-            if response.status_code == 200:
-                files = response.json()
-                for file in files:
-                    if query and query.lower() in file["name"].lower():
-                        local_docs.append({"title": file["name"], "content": "Stored in Nextcloud", "source": "nextcloud", "url": file["href"]})
+            if response.status_code == 207:  # Multi-status response
+                # Parse the XML response
+                root = ET.fromstring(response.content)
+                ns = {"d": "DAV:"}
+                files = []
+                for resp in root.findall(".//d:response", ns):
+                    href = resp.find("d:href", ns).text
+                    displayname = resp.find(".//d:displayname", ns)
+                    resourcetype = resp.find(".//d:resourcetype", ns)
+                    # Skip if it's a collection (directory)
+                    if not resourcetype.find("d:collection", ns):
+                        name = displayname.text if displayname is not None else href.split("/")[-1]
+                        if query and query.lower() in name.lower():
+                            files.append({"title": name, "content": "Stored in Nextcloud", "source": "nextcloud", "url": href})
+                local_docs.extend(files)
+            else:
+                print(f"Nextcloud fetch failed: Status {response.status_code}")
         except Exception as e:
             print(f"Nextcloud fetch failed: {str(e)}")
 
@@ -152,15 +182,24 @@ def query_ollama(prompt, include_memory=False, memory_category=None):
 
 def execute_python_code(code):
     try:
-        with open("temp_code.py", "w") as f:
+        # Write the code to a temporary file
+        with open("/tmp/temp_code.py", "w") as f:
             f.write(code)
+        # Run the code in a Docker container with subprocess timeout
         result = subprocess.run(
-            ["python3", "temp_code.py"],
+            [
+                "docker", "run", "--rm",
+                "-v", "/tmp/temp_code.py:/app/temp_code.py",
+                "--security-opt", "no-new-privileges",
+                "--cap-drop", "ALL",
+                "--network", "none",
+                "billy-python-sandbox",
+                "python", "temp_code.py"
+            ],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5  # Timeout handled by subprocess
         )
-        os.remove("temp_code.py")
         if result.stderr:
             return f"Error: {result.stderr}"
         return result.stdout.strip()
@@ -168,6 +207,10 @@ def execute_python_code(code):
         return "Error: Code execution timed out after 5 seconds."
     except Exception as e:
         return f"Error: {str(e)}"
+    finally:
+        # Clean up the temporary file
+        if os.path.exists("/tmp/temp_code.py"):
+            os.remove("/tmp/temp_code.py")
 
 # Store the last executed code and result for potential saving
 last_code = None
@@ -252,6 +295,10 @@ def chat():
         chat_history.append({"role": "billy", "content": response})
 
     return render_template("index.html", chat_history=chat_history, tone=TONE, tools=tools)
+
+@app.route("/admin.html", methods=["GET"])
+def admin_redirect():
+    return redirect(url_for("admin"))
 
 @app.route("/admin", methods=["GET"])
 def admin():
