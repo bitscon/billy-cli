@@ -2,3 +2,9 @@ venv/
 init_db.py
 db/billy.db
 src/__pycache__/billy.cpython-310.pyc
+src/__pycache__/config.cpython-310.pyc
+src/__pycache__/database.cpython-310.pyc
+src/__pycache__/file_manager.cpython-310.pyc
+src/__pycache__/github_manager.cpython-310.pyc
+src/__pycache__/ollama.cpython-310.pyc
+src/__pycache__/web_search.cpython-310.pyc

@@ -1,4 +1,5 @@
 import requests
+import json
 from config import Config
 
 def query_ollama(prompt, include_memory=False, memory_category=None):

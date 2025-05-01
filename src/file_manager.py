@@ -1,6 +1,10 @@
 import os
 import subprocess
-from github_manager import ensure_local_repo, commit_and_push_changes, LOCAL_REPO_PATH
+from github_manager import ensure_local_repo, commit_and_push_changes
+from config import Config
+
+config = Config()
+LOCAL_REPO_PATH = config.LOCAL_REPO_PATH
 
 def create_local_file(file_path, content):
     """Create or update a file in the local repository."""
