@@ -4,6 +4,10 @@ import os
 from flask import Flask, request, render_template, jsonify, redirect, url_for, session
 from config import Config
 from database import load_memory, save_memory, analyze_common_errors, get_memory_context, prune_old_data
+from database import initialize_database
+initialize_database()
+from database import initialize_database
+initialize_database()
 from github_manager import get_local_repo_contents, analyze_repo_for_improvements, get_own_code
 from file_manager import create_file_with_test, update_file_with_test, delete_file_with_commit
 from web_search import web_search
