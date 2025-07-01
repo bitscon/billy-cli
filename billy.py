@@ -1,40 +1,16 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import requests
-import json
 import time
 
 app = Flask(__name__)
-CORS(app)
+CORS(app)  # enable Open WebUI access from any origin
 
+# === [ PATCHED /v1/chat/completions endpoint with token counts ] ===
 @app.route('/v1/chat/completions', methods=['POST'])
 def chat_completions():
     data = request.json
     user_prompt = data.get("messages", [{"content": ""}])[-1]["content"]
-
-    # Call Ollama /api/chat endpoint with streaming support
-    try:
-        ollama_response = requests.post(
-            "http://localhost:11434/api/chat",
-            json={
-                "model": "llama3",
-                "messages": [
-                    {"role": "user", "content": user_prompt}
-                ]
-            },
-            stream=True
-        )
-        ollama_response.raise_for_status()
-
-        response_text = ""
-        for line in ollama_response.iter_lines():
-            if line:
-                part = line.decode('utf-8')
-                part_json = json.loads(part)
-                content_piece = part_json.get("message", {}).get("content", "")
-                response_text += content_piece
-    except Exception as e:
-        response_text = f"Error contacting Ollama: {e}"
+    response_text = "Hello from Billy"  # Replace with your actual processing call
 
     prompt_tokens = len(user_prompt.split())
     completion_tokens = len(response_text.split())
@@ -59,6 +35,7 @@ def chat_completions():
         }
     })
 
+# --- OpenAI-compatible model listing for Open WebUI ---
 @app.route('/v1/models', methods=['GET'])
 def list_models():
     return jsonify({

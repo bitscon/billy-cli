@@ -22,3 +22,10 @@ def save_documentation(*args, **kwargs):
 
 def get_documentation(*args, **kwargs):
     return ""
+
+import sqlite3
+
+def get_db_connection():
+    conn = sqlite3.connect('billy.db')
+    conn.row_factory = sqlite3.Row
+    return conn
