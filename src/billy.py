@@ -365,3 +365,31 @@ def delete_tool():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+from flask import jsonify
+import datetime
+
+@app.route("/api/v1/generate", methods=["POST"])
+def api_generate_v1():
+    data = request.get_json()
+    prompt = data.get("prompt", "")
+    if not prompt:
+        return jsonify({"error": "Missing prompt"}), 400
+
+    # Save user prompt to memory
+    save_memory(prompt, "", "api_request")
+
+    # Query Ollama via Billy
+    response_text = query_ollama(prompt)
+
+    # Save Billy response to memory
+    save_memory(prompt, response_text, "api_response")
+
+    return jsonify({
+        "model": "billy",
+        "version": "v1",
+        "created_at": datetime.datetime.now().isoformat(),
+        "message": {
+            "role": "assistant",
+            "content": response_text
+        }
+    })
