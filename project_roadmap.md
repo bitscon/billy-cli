@@ -98,3 +98,14 @@
 ---
 
 > Next up: **Phase 2** — Let’s begin adding modular skills to make Billy smarter.
+
+## ⚙️ n8n Integration (Early Phase)
+
+| Feature | Status |
+|--------|--------|
+| Run self-hosted n8n as systemd service | ✅ Done |
+| Create webhook workflow for `/billy-ask` | ✅ Done |
+| Call local LLM via Ollama in workflow | ✅ Done |
+| Parse request and return structured response | ✅ Done |
+| Clean up test artifacts and webhook name | ✅ Incomplete |
+| Create production-ready, exportable workflow | ⬜ Incomplete |
