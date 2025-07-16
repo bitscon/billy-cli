@@ -7,16 +7,17 @@ import time
 import requests
 import json
 
-# Configuration
+from skills import CommandSafetyChecker
+
 OLLAMA_ENDPOINT = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama4:latest"
 HISTORY_LOG = os.path.expanduser("~/.billy_history.log")
 
-# Helper: Check if a tool exists in PATH
+safety_checker = CommandSafetyChecker()
+
 def is_tool_installed(tool_name):
     return shutil.which(tool_name) is not None
 
-# Helper: Install missing tool (safely)
 def try_install_tool(tool_name):
     print(f"\n[🛠️  Attempting to install '{tool_name}' using apt...]")
     try:
@@ -26,7 +27,6 @@ def try_install_tool(tool_name):
     except subprocess.CalledProcessError:
         print(f"[❌ Failed to install '{tool_name}']")
 
-# Helper: Run shell command and return output
 def run_command(command):
     try:
         result = subprocess.run(command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -34,13 +34,11 @@ def run_command(command):
     except subprocess.CalledProcessError as e:
         return f"[⚠️ Command failed: {e.stderr.strip()}]"
 
-# Helper: Log command to history
 def log_command(cmd):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     with open(HISTORY_LOG, "a") as f:
         f.write(f"[{timestamp}] {cmd}\n")
 
-# Use Ollama to interpret the user's intent and generate a shell command
 def ask_ollama_for_command(user_prompt):
     headers = {"Content-Type": "application/json"}
     payload = {
@@ -56,15 +54,13 @@ def ask_ollama_for_command(user_prompt):
     except Exception as e:
         return f"[❌ Failed to reach Ollama: {e}]"
 
-# Main interactive loop
 def billy_loop():
     print("\n🤖  Welcome to Billy — your local AI Linux shell. Type 'exit' or Ctrl+D to quit.\n")
     while True:
         try:
             user_input = input("💬 You: ").strip()
             if user_input.lower() in ('exit', 'quit'): break
-            if not user_input:
-                continue
+            if not user_input: continue
 
             print("\n🧠 Billy is thinking...")
             generated_cmd = ask_ollama_for_command(user_input)
@@ -74,6 +70,14 @@ def billy_loop():
                 continue
 
             print(f"\n💡 Suggested command: \033[1;36m{generated_cmd}\033[0m")
+
+            safe, reason = safety_checker.analyze(generated_cmd)
+            print(f"\n🔎 Safety Check: {reason}")
+            if not safe:
+                confirm = input("❗ Are you sure you want to run this command? [y/N]: ").strip().lower()
+                if confirm != 'y':
+                    print("[🛑 Command canceled by user.]")
+                    continue
 
             required_tool = generated_cmd.split()[0]
             if not is_tool_installed(required_tool):
@@ -88,7 +92,7 @@ def billy_loop():
                     print("[🚫 Skipping execution.]")
                     continue
 
-            log_command(generated_cmd)  # ✅ Log to history
+            log_command(generated_cmd)
             print("\n⚙️  Running command...")
             output = run_command(generated_cmd)
             print(f"\n📤 Output:\n{output}\n")

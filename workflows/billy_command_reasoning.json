@@ -1,0 +1,102 @@
+{
+  "name": "billy_command_reasoning",
+  "nodes": [
+    {
+      "id": "http-in",
+      "name": "Receive Prompt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "parameters": {
+        "path": "billy",
+        "method": "POST",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "interpret",
+      "name": "Interpret Intent",
+      "type": "n8n-nodes-base.openai",
+      "typeVersion": 2,
+      "position": [500, 200],
+      "parameters": {
+        "model": "gpt-3.5-turbo",
+        "chatMessage": [
+          {
+            "role": "system",
+            "content": "You are an AI that receives a user’s command. Explain what you think they are asking to do in one sentence."
+          },
+          {
+            "role": "user",
+            "content": "={{$json.body.prompt}}"
+          }
+        ],
+        "responseProperty": "intent"
+      }
+    },
+    {
+      "id": "plan",
+      "name": "Plan Command",
+      "type": "n8n-nodes-base.openai",
+      "typeVersion": 2,
+      "position": [500, 400],
+      "parameters": {
+        "model": "gpt-3.5-turbo",
+        "chatMessage": [
+          {
+            "role": "system",
+            "content": "You are an AI CLI assistant. Your job is to produce a shell command (for Linux) to fulfill the following task. Give just the command and nothing else."
+          },
+          {
+            "role": "user",
+            "content": "={{$json.body.prompt}}"
+          }
+        ],
+        "responseProperty": "command"
+      }
+    },
+    {
+      "id": "response",
+      "name": "Return JSON",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [800, 300],
+      "parameters": {
+        "values": {
+          "json": [
+            {
+              "name": "intent",
+              "value": "={{$node[\"Interpret Intent\"].json[\"intent\"]}}"
+            },
+            {
+              "name": "plan",
+              "value": "={{$json.body.prompt}}"
+            },
+            {
+              "name": "command",
+              "value": "={{$node[\"Plan Command\"].json[\"command\"]}}"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Receive Prompt": {
+      "main": [
+        [
+          { "node": "Interpret Intent", "type": "main", "index": 0 },
+          { "node": "Plan Command", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Interpret Intent": {
+      "main": [[{ "node": "Return JSON", "type": "main", "index": 0 }]]
+    },
+    "Plan Command": {
+      "main": [[{ "node": "Return JSON", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false
+}
