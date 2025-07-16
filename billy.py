@@ -10,7 +10,7 @@ import json
 from skills import CommandSafetyChecker
 
 OLLAMA_ENDPOINT = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "llama4:latest"
+OLLAMA_MODEL = "llama3.2:latest"
 HISTORY_LOG = os.path.expanduser("~/.billy_history.log")
 
 safety_checker = CommandSafetyChecker()
