@@ -9,7 +9,7 @@ import json
 
 # Configuration
 OLLAMA_ENDPOINT = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "llama3.2:latest"
+OLLAMA_MODEL = "llama4:latest"
 
 # Helper: Check if a tool exists in PATH
 def is_tool_installed(tool_name):
