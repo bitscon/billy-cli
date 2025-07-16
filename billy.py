@@ -10,6 +10,7 @@ import json
 # Configuration
 OLLAMA_ENDPOINT = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama4:latest"
+HISTORY_LOG = os.path.expanduser("~/.billy_history.log")
 
 # Helper: Check if a tool exists in PATH
 def is_tool_installed(tool_name):
@@ -29,31 +30,33 @@ def try_install_tool(tool_name):
 def run_command(command):
     try:
         result = subprocess.run(command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        return result.stdout.strip() or result.stderr.strip()
+        return result.stdout.strip()
     except subprocess.CalledProcessError as e:
         return f"[⚠️ Command failed: {e.stderr.strip()}]"
 
-# Basic safety filter to block dangerous commands
-def is_command_safe(cmd):
-    dangerous = ['rm -rf /', 'mkfs', ':(){:|:&};:', 'dd if=']
-    return not any(d in cmd for d in dangerous)
+# Helper: Log command to history
+def log_command(cmd):
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    with open(HISTORY_LOG, "a") as f:
+        f.write(f"[{timestamp}] {cmd}\n")
 
 # Use Ollama to interpret the user's intent and generate a shell command
 def ask_ollama_for_command(user_prompt):
     headers = {"Content-Type": "application/json"}
     payload = {
         "model": OLLAMA_MODEL,
-        "prompt": f"You are Billy, a helpful Linux assistant. Output ONLY the exact bash command a user would run to do the following task:\n\n'{user_prompt}'\n\nDo not include explanations or formatting — just a valid bash command.",
+        "prompt": f"You are a Linux command-line assistant. Given this user input, generate the correct bash command only (no explanations):\n\n'{user_prompt}'",
         "stream": False
     }
     try:
         response = requests.post(OLLAMA_ENDPOINT, headers=headers, json=payload, timeout=60)
         response.raise_for_status()
         parsed = response.json()
-        return parsed.get("response", "").strip()
+        return parsed.get("response", "")
     except Exception as e:
         return f"[❌ Failed to reach Ollama: {e}]"
 
+# Main interactive loop
 def billy_loop():
     print("\n🤖  Welcome to Billy — your local AI Linux shell. Type 'exit' or Ctrl+D to quit.\n")
     while True:
@@ -72,10 +75,6 @@ def billy_loop():
 
             print(f"\n💡 Suggested command: \033[1;36m{generated_cmd}\033[0m")
 
-            if not is_command_safe(generated_cmd):
-                print("[🚫 Dangerous command detected. Skipping execution for safety.]")
-                continue
-
             required_tool = generated_cmd.split()[0]
             if not is_tool_installed(required_tool):
                 print(f"[🔍 Tool '{required_tool}' not found on system]")
@@ -89,6 +88,7 @@ def billy_loop():
                     print("[🚫 Skipping execution.]")
                     continue
 
+            log_command(generated_cmd)  # ✅ Log to history
             print("\n⚙️  Running command...")
             output = run_command(generated_cmd)
             print(f"\n📤 Output:\n{output}\n")

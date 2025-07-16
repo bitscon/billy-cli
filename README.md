@@ -1,51 +1,34 @@
-# Billy - A Conversational AI Assistant
+# Billy — Your Local AI Linux Assistant 🧠🖥️
 
-## Overview
-Billy is a conversational AI assistant designed to interact with users through a web interface, perform tasks like code execution, file management, and web searches, and learn from interactions to improve its responses. Built with Python and Flask, Billy integrates with GitHub for repository management, uses SQLite for data persistence, and leverages the Ollama API for natural language understanding.
+> A command-line AI assistant inspired by Jarvis, HAL, and a touch of Alexa.  
+> Billy interprets your natural language, generates smart Linux commands using LLMs, executes them safely, and evolves to serve you better on your own machine.
 
-## Features
-- **Conversational Interface**: Engage in natural conversations via a Flask-based web app.
-- **Code Execution**: Run Python code in a secure Docker sandbox and debug errors.
-- **File Management**: Create, update, and delete files in a GitHub repository with local testing.
-- **Web Search**: Perform web searches and save results for reference.
-- **Learning Capabilities**: Log interactions and errors to improve future responses.
-- **Repository Analysis**: Analyze and suggest improvements for the GitHub repository.
+---
 
-## Installation
-1. **Clone the Repository**:
-   ```bash
-   git clone https://github.com/bitscon/billy.git
-   cd billy
-   ```
-2. **Set Up a Virtual Environment**:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
-3. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. **Configure the Database**:
-   - Ensure SQLite is installed.
-   - Initialize the database by running the Flask app for the first time.
-5. **Run the Application**:
-   ```bash
-   python3 src/billy.py
-   ```
-   Access Billy at `http://localhost:5000`.
+## 🚀 Overview
 
-## Usage
-- **Interact with Billy**: Open the web interface and start a conversation.
-- **Run Code**: Provide Python code snippets for execution in a secure sandbox.
-- **Manage Files**: Request Billy to create, update, or delete files in the GitHub repository.
-- **Search the Web**: Ask Billy to search for information online.
+Billy is a **local, secure, Linux-native CLI assistant**.  
+He uses a local LLM via [Ollama](https://ollama.com) to understand your natural language and translate it into executable Linux commands.  
+Billy runs entirely on your machine, with no cloud dependency, internet requirement, or external API calls.
 
-## Contributing
-Contributions are welcome! Please fork the repository, create a feature branch, and submit a pull request with your changes. Ensure all tests pass before submitting.
+---
 
-## License
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+## ✨ Features (Current)
 
-## Contact
-For issues or inquiries, please open an issue on GitHub or contact the maintainers at [bitscon@example.com](mailto:bitscon@example.com).
+- 💬 **Natural language interface in the terminal**
+- 🧠 **Uses local LLM (via Ollama) to generate shell commands**
+- 🧪 **Confirms the command before execution**
+- ⚙️ **Runs safe commands via subprocess**
+- 🧯 **Error handling for failed or risky actions**
+- 📜 **Maintains history log of actions**
+- 🧰 **Can auto-install missing tools using apt**
+
+---
+
+## 🛠️ Installation
+
+### 1. Clone the Project
+
+```bash
+git clone https://github.com/bitscon/billy.git
+cd billy

@@ -1,132 +1,100 @@
-# 🧠 Billy AI - Roadmap
+# 🧠 Billy Roadmap
 
-This roadmap outlines the phased development plan for **Billy**, your local Linux-native AI assistant. The goal is to create a secure, intelligent, voice-capable, command-line assistant — blending the precision of **HAL**, the responsiveness of **Jarvis**, and the convenience of **Alexa/Google Assistant**.
-
-Billy will:
-- Interpret natural language via LLM (Ollama backend)
-- Execute safe, sandboxed Linux commands
-- Install tools when required
-- Learn and grow with permission
-- Eventually interact with APIs, files, voice, and more
+> A local Linux-native AI assistant inspired by HAL, Jarvis, and Alexa.  
+> Uses an LLM to interpret natural language, executes system commands safely, and evolves iteratively.
 
 ---
 
-## ✅ PHASE 0 — Baseline Setup (Done)
-- [x] `billy.py` responds from terminal via CLI
-- [x] Connects to `Ollama` model (e.g., `llama3`)
-- [x] Logs interactions
-- [x] Can interpret and echo back text
-- [x] Systemd service for background API if needed
-
----
-
-## 🔧 PHASE 1 — Core Shell + Command Engine
+## 🔧 PHASE 1 — Core Shell + Command Engine ✅
 
 > _Goal: Make Billy understand, decide, and execute safe commands._
 
-- [ ] Accept natural language input
-- [ ] Use LLM to convert user request to Linux command
-- [ ] Confirm command plan with user before execution
-- [ ] Execute using `subprocess` (safe context)
-- [ ] Return and format results in readable output
-- [ ] Handle common errors gracefully
-- [ ] Maintain command history in a local log
-
-**Example Use Cases:**
-- "What is my IP?" → `curl ifconfig.me`
-- "Install htop" → `sudo apt install htop`
-- "Check disk space" → `df -h`
+| Feature | Status |
+|--------|--------|
+| Accept natural language input | ✅ Done |
+| Use LLM to convert user request to Linux command | ✅ Done |
+| Confirm command plan with user before execution | ✅ Done |
+| Execute using `subprocess` (safe context) | ✅ Done |
+| Return and format results in readable output | ✅ Done |
+| Handle common errors gracefully | ✅ Done |
+| Maintain command history in a local log | ✅ Done |
 
 ---
 
-## 🔐 PHASE 2 — Safety & Permissions
+## 🧩 PHASE 2 — Skills + Toolchains (Modular Tools)
 
-> _Goal: Prevent Billy from harming the OS or escalating unintentionally._
+> _Goal: Expand Billy’s capabilities with structured tools, checks, and output formatters._
 
-- [ ] Run under limited `billy` user account
-- [ ] Block dangerous commands (e.g., `rm -rf /`, `kill -9 1`)
-- [ ] Validate apt installs with package name check
-- [ ] Prompt for sudo when required (and log)
-- [ ] Add config setting for "confirm before run" toggle
-- [ ] Dry-run preview of actions before execution (optional mode)
-
----
-
-## 🧠 PHASE 3 — Smart Tooling & Learning
-
-> _Goal: Let Billy get better with time and help you faster._
-
-- [ ] Let Billy auto-detect missing tools (`which`, `command -v`)
-- [ ] Offer to install tools via `apt`
-- [ ] Store tool knowledge in a local registry (`~/.billy/known_tools.json`)
-- [ ] Save user preferences (e.g., preferred editor)
-- [ ] Provide summary of last tasks done ("What did I ask earlier?")
+| Feature | Status |
+|--------|--------|
+| Modular “skills” system (detect special tasks) | ⬜ Planned |
+| Built-in skills: system health, disk usage, logs, ports | ⬜ Planned |
+| Command safety scoring / classification | ⬜ Planned |
+| Tool presence checker (e.g. `docker`, `git`) | ⬜ Planned |
+| Rich text or colorized CLI output formatting | ⬜ Planned |
 
 ---
 
-## 📡 PHASE 4 — Internet Awareness & APIs
+## 🛰️ PHASE 3 — API + Network Awareness
 
-> _Goal: Expand Billy's reach beyond local machine._
+> _Goal: Give Billy the ability to interact across networks and systems._
 
-- [ ] Add safe internet search using DuckDuckGo
-- [ ] Allow calling APIs with `curl` or prebuilt wrappers
-- [ ] Enable `n8n` integration for complex automation
-- [ ] Allow configuring and hitting local APIs (e.g., Home Assistant, OpenWebUI)
-
----
-
-## 🔊 PHASE 5 — Voice & Audio I/O
-
-> _Goal: Enable hands-free assistant functionality._
-
-- [ ] Add text-to-speech using `espeak` or `flite`
-- [ ] Add speech-to-text using `whisper` or `vosk`
-- [ ] Enable hotword detection or push-to-talk
-- [ ] Configure audio input/output device preferences
+| Feature | Status |
+|--------|--------|
+| Ping, traceroute, dig, nmap tools | ⬜ Planned |
+| Scan and identify devices on local network | ⬜ Planned |
+| Check external connectivity / DNS status | ⬜ Planned |
+| Smart curl/wget for pulling resources | ⬜ Planned |
 
 ---
 
-## 🧠 PHASE 6 — Memory, Context & Personality
+## 🤖 PHASE 4 — Smart Context + Memory
 
-> _Goal: Give Billy continuity and depth._
+> _Goal: Enable recall, notes, persistence and personal memory._
 
-- [ ] Store task summaries and user interaction history
-- [ ] Allow optional memory of past commands/responses
-- [ ] Let Billy recall names, preferences, and past actions
-- [ ] Enable personality configuration ("Be witty", "Formal", etc.)
-- [ ] Expose `billy config` command-line tool for tuning
-
----
-
-## 🚀 PHASE 7 — Autonomous Tasking (Optional + Opt-in)
-
-> _Goal: Let Billy act on your behalf — safely._
-
-- [ ] Schedule tasks via cron or systemd
-- [ ] Monitor system health and notify you
-- [ ] Autoupdate packages or config
-- [ ] Safely retry failed commands
-- [ ] Ask for approval before autonomous actions
+| Feature | Status |
+|--------|--------|
+| Save and recall previous Q&A or task sessions | ⬜ Planned |
+| Named memory (e.g. “remember my router IP is…”) | ⬜ Planned |
+| File-based persistent notes or task logs | ⬜ Planned |
+| Searchable local context memory | ⬜ Planned |
 
 ---
 
-## 🗂️ Project Files To Track This Roadmap
-- `billy.py` — Core executable
-- `README.md` — Intro and usage
-- `ROADMAP.md` — This file
-- `CHANGELOG.md` — Milestone logs
-- `billy_config.json` — Settings (coming in Phase 3–6)
+## 🎙️ PHASE 5 — Voice + Interaction Modes
+
+> _Goal: Turn Billy into a voice or desktop-style assistant._
+
+| Feature | Status |
+|--------|--------|
+| Speech-to-text CLI interface | ⬜ Planned |
+| Text-to-speech responses | ⬜ Planned |
+| Wake-word activation | ⬜ Planned |
+| Optional system tray UI | ⬜ Planned |
 
 ---
 
-## 🧭 Next Milestone
-Start **Phase 1: Shell + Command Engine**
+## 📦 PHASE 6 — Packages + Plugins
 
-- Begin writing CLI parser + LLM-to-command function
-- Use dry-run confirmation
-- Execute simple safe commands
+> _Goal: Let users extend Billy with their own tools._
 
-Let’s keep building.
+| Feature | Status |
+|--------|--------|
+| Plugin execution system (local Python modules) | ⬜ Planned |
+| Community skills repo (installable add-ons) | ⬜ Planned |
+| Custom tool registration (per user/system) | ⬜ Planned |
 
 ---
 
+## 🛡️ Security & Sandboxing (Ongoing)
+
+| Feature | Status |
+|--------|--------|
+| Isolated user account (`billy`) | ✅ Done |
+| Ask before running privileged or destructive commands | ✅ Done |
+| Limit scope of writable dirs and permissions | ⬜ Planned |
+| Optional AppArmor or chroot sandboxing | ⬜ Planned |
+
+---
+
+> Next up: **Phase 2** — Let’s begin adding modular skills to make Billy smarter.
