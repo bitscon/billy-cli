@@ -3,6 +3,7 @@ import time
 import socketio
 import eventlet
 import requests
+from eventlet import wsgi, static
 
 # Config
 N8N_WEBHOOK = "http://localhost:5678/webhook/billy-ask"
@@ -11,7 +12,10 @@ LOGFILE = os.path.expanduser("~/.billy_history.log")
 
 # Socket.IO setup (no Flask)
 sio = socketio.Server(cors_allowed_origins="*")
-app = socketio.WSGIApp(sio)
+
+# Serve static files from ./static folder
+static_app = static.Cling(os.path.join(os.path.dirname(__file__), 'static'))
+app = socketio.WSGIApp(sio, static_app)
 
 def log(prompt):
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -45,5 +49,5 @@ def ask(sid, data):
     sio.emit("reply", {"response": response}, to=sid)
 
 if __name__ == "__main__":
-    print(f"🧠 Billy Socket.IO server (no Flask) listening on port {PORT}...")
-    eventlet.wsgi.server(eventlet.listen(('', PORT)), app)
+    print(f"🧠 Billy Socket.IO server (with static HTML) on port {PORT}...")
+    wsgi.server(eventlet.listen(('', PORT)), app)

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Billy — AI Terminal Assistant</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #121212;
+      color: #f0f0f0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    header {
+      background-color: #1f1f1f;
+      padding: 1rem;
+      text-align: center;
+      font-size: 1.4rem;
+      font-weight: bold;
+      color: #00ffd5;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+    }
+
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 1rem;
+      overflow-y: auto;
+    }
+
+    .chat {
+      max-width: 800px;
+      margin: auto;
+      width: 100%;
+    }
+
+    .message {
+      margin-bottom: 1rem;
+    }
+
+    .user {
+      text-align: right;
+      color: #00ffd5;
+    }
+
+    .billy {
+      text-align: left;
+      color: #ffa500;
+    }
+
+    form {
+      display: flex;
+      padding: 1rem;
+      background: #1f1f1f;
+      border-top: 1px solid #333;
+    }
+
+    input {
+      flex: 1;
+      padding: 0.75rem;
+      font-size: 1rem;
+      border: none;
+      border-radius: 5px;
+      outline: none;
+      background: #2a2a2a;
+      color: #f0f0f0;
+    }
+
+    button {
+      margin-left: 0.5rem;
+      padding: 0.75rem 1rem;
+      background: #00ffd5;
+      color: #000;
+      border: none;
+      border-radius: 5px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #00c7aa;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    🧠 Billy — Your Terminal AI, Web Edition
+  </header>
+
+  <main>
+    <div class="chat" id="chat"></div>
+  </main>
+
+  <form id="chatForm">
+    <input type="text" id="promptInput" placeholder="Ask Billy something..." autocomplete="off" />
+    <button type="submit">Ask</button>
+  </form>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script>
+    const socket = io();
+    const chat = document.getElementById("chat");
+    const form = document.getElementById("chatForm");
+    const input = document.getElementById("promptInput");
+
+    function addMessage(role, text) {
+      const msg = document.createElement("div");
+      msg.className = "message " + role;
+      msg.textContent = text;
+      chat.appendChild(msg);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const prompt = input.value.trim();
+      if (!prompt) return;
+      addMessage("user", "🧍 " + prompt);
+      socket.emit("ask", { prompt });
+      input.value = "";
+    });
+
+    socket.on("reply", (data) => {
+      addMessage("billy", "🤖 " + data.response);
+    });
+  </script>
+</body>
+</html>
