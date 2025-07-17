@@ -15,7 +15,11 @@ def log_prompt(prompt):
 
 def ask_n8n(prompt):
     try:
+        print(f"{Fore.BLUE}[DEBUG] Posting to: {N8N_ENDPOINT}")
+        print(f"{Fore.BLUE}[DEBUG] Prompt: {prompt}")
         r = requests.post(N8N_ENDPOINT, json={"prompt": prompt}, timeout=60)
+        print(f"{Fore.BLUE}[DEBUG] HTTP Status: {r.status_code}")
+        print(f"{Fore.BLUE}[DEBUG] Raw Response: {r.text}")
         r.raise_for_status()
         return r.json().get("output", "[No output returned]")
     except Exception as e:
