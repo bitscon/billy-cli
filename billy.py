@@ -1,4 +1,3 @@
-cat > billy.py << 'EOF'
 import requests
 import os
 import time
@@ -42,4 +41,3 @@ def billy_loop():
 
 if __name__ == "__main__":
     billy_loop()
-EOF
