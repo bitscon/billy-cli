@@ -1,9 +1,15 @@
-import requests
 import os
 import time
-from colorama import init as colorama_init, Fore, Style
+import requests
 
-colorama_init(autoreset=True)
+# Optional: use colorama if installed, otherwise fallback to plain text
+try:
+    from colorama import init as colorama_init, Fore, Style
+    colorama_init(autoreset=True)
+except ImportError:
+    class DummyColor:
+        def __getattr__(self, name): return ''
+    Fore = Style = DummyColor()
 
 N8N_ENDPOINT = "http://localhost:5678/webhook/billy-ask"
 HISTORY_LOG = os.path.expanduser("~/.billy_history.log")
@@ -16,7 +22,6 @@ def log_prompt(prompt):
 def ask_n8n(prompt):
     try:
         print(f"{Fore.BLUE}[DEBUG] Posting to: {N8N_ENDPOINT}")
-        print(f"{Fore.BLUE}[DEBUG] Prompt: {prompt}")
         r = requests.post(N8N_ENDPOINT, json={"prompt": prompt}, timeout=60)
         print(f"{Fore.BLUE}[DEBUG] HTTP Status: {r.status_code}")
         print(f"{Fore.BLUE}[DEBUG] Raw Response: {r.text}")
