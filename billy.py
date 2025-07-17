@@ -1,52 +1,49 @@
 import os
 import time
+import socketio
+import eventlet
 import requests
 
-# Optional: use colorama if installed, otherwise fallback to plain text
-try:
-    from colorama import init as colorama_init, Fore, Style
-    colorama_init(autoreset=True)
-except ImportError:
-    class DummyColor:
-        def __getattr__(self, name): return ''
-    Fore = Style = DummyColor()
+# Config
+N8N_WEBHOOK = "http://localhost:5678/webhook/billy-ask"
+PORT = 5001
+LOGFILE = os.path.expanduser("~/.billy_history.log")
 
-N8N_ENDPOINT = "http://localhost:5678/webhook/billy-ask"
-HISTORY_LOG = os.path.expanduser("~/.billy_history.log")
+# Socket.IO setup (no Flask)
+sio = socketio.Server(cors_allowed_origins="*")
+app = socketio.WSGIApp(sio)
 
-def log_prompt(prompt):
+def log(prompt):
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
-    with open(HISTORY_LOG, "a") as f:
+    with open(LOGFILE, "a") as f:
         f.write(f"[{ts}] {prompt}\n")
 
-def ask_n8n(prompt):
+def send_to_n8n(prompt):
     try:
-        print(f"{Fore.BLUE}[DEBUG] Posting to: {N8N_ENDPOINT}")
-        r = requests.post(N8N_ENDPOINT, json={"prompt": prompt}, timeout=60)
-        print(f"{Fore.BLUE}[DEBUG] HTTP Status: {r.status_code}")
-        print(f"{Fore.BLUE}[DEBUG] Raw Response: {r.text}")
+        r = requests.post(N8N_WEBHOOK, json={"prompt": prompt}, timeout=30)
         r.raise_for_status()
-        return r.json().get("output", "[No output returned]")
+        return r.json().get("output", "⚠️ No output from n8n.")
     except Exception as e:
-        return f"{Fore.RED}[n8n error: {e}]{Style.RESET_ALL}"
+        return f"❌ Error talking to n8n: {e}"
 
-def billy_loop():
-    print(f"\n{Style.BRIGHT}🤖  Billy CLI — your AI terminal assistant via n8n\n")
-    while True:
-        try:
-            user_input = input(f"{Fore.GREEN}💬 You:{Style.RESET_ALL} ").strip()
-            if user_input.lower() in ("exit", "quit"): break
-            if not user_input: continue
+@sio.event
+def connect(sid, environ):
+    print(f"[+] Client connected: {sid}")
 
-            log_prompt(user_input)
-            print(f"\n{Fore.YELLOW}📡 Sending to n8n...{Style.RESET_ALL}")
-            output = ask_n8n(user_input)
-            print(f"\n{Style.BRIGHT}📤 Response:{Style.RESET_ALL}\n")
-            print(output + "\n")
+@sio.event
+def disconnect(sid):
+    print(f"[-] Client disconnected: {sid}")
 
-        except (KeyboardInterrupt, EOFError):
-            print(f"\n{Style.BRIGHT}👋 Goodbye!{Style.RESET_ALL}")
-            break
+@sio.event
+def ask(sid, data):
+    prompt = data.get("prompt", "").strip()
+    if not prompt:
+        sio.emit("reply", {"response": "❌ Empty prompt"}, to=sid)
+        return
+    log(prompt)
+    response = send_to_n8n(prompt)
+    sio.emit("reply", {"response": response}, to=sid)
 
 if __name__ == "__main__":
-    billy_loop()
+    print(f"🧠 Billy Socket.IO server (no Flask) listening on port {PORT}...")
+    eventlet.wsgi.server(eventlet.listen(('', PORT)), app)
