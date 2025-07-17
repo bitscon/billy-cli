@@ -1,105 +1,123 @@
 import subprocess
 import shutil
-import sys
-import readline
 import os
 import time
 import requests
 import json
+from skills import CommandSafetyChecker, SkillManager
+from colorama import init as colorama_init, Fore, Style
 
-from skills import CommandSafetyChecker
+colorama_init(autoreset=True)
 
+# -- CONFIG --
+USE_N8N = True
+N8N_ENDPOINT = "http://localhost:5678/webhook/billy-ask"
 OLLAMA_ENDPOINT = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3.2:latest"
 HISTORY_LOG = os.path.expanduser("~/.billy_history.log")
 
 safety_checker = CommandSafetyChecker()
+skill_manager = SkillManager()
 
 def is_tool_installed(tool_name):
     return shutil.which(tool_name) is not None
 
 def try_install_tool(tool_name):
-    print(f"\n[🛠️  Attempting to install '{tool_name}' using apt...]")
+    print(f\"{Fore.YELLOW}[Installing '{tool_name}' via apt...] \")
     try:
         subprocess.run(["sudo", "apt", "update"], check=True)
         subprocess.run(["sudo", "apt", "install", "-y", tool_name], check=True)
-        print(f"[✅ Installed '{tool_name}']")
+        print(f\"{Fore.GREEN}[Installed '{tool_name}']\")
     except subprocess.CalledProcessError:
-        print(f"[❌ Failed to install '{tool_name}']")
+        print(f\"{Fore.RED}[Failed to install '{tool_name}']\")
 
-def run_command(command):
+def run_command(cmd):
     try:
-        result = subprocess.run(command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        return result.stdout.strip()
+        res = subprocess.run(cmd, shell=True, check=True,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return res.stdout.strip()
     except subprocess.CalledProcessError as e:
-        return f"[⚠️ Command failed: {e.stderr.strip()}]"
+        return f\"{Fore.RED}[Command failed: {e.stderr.strip()}]{Style.RESET_ALL}\"
 
 def log_command(cmd):
-    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    ts = time.strftime(\"%Y-%m-%d %H:%M:%S\")
     with open(HISTORY_LOG, "a") as f:
-        f.write(f"[{timestamp}] {cmd}\n")
+        f.write(f\"[{ts}] {cmd}\\n\")
 
-def ask_ollama_for_command(user_prompt):
-    headers = {"Content-Type": "application/json"}
-    payload = {
-        "model": OLLAMA_MODEL,
-        "prompt": f"You are a Linux command-line assistant. Given this user input, generate the correct bash command only (no explanations):\n\n'{user_prompt}'",
-        "stream": False
-    }
+def ask_n8n(prompt):
+    payload = { "prompt": prompt }
     try:
-        response = requests.post(OLLAMA_ENDPOINT, headers=headers, json=payload, timeout=60)
-        response.raise_for_status()
-        parsed = response.json()
-        return parsed.get("response", "")
+        r = requests.post(N8N_ENDPOINT, json=payload, timeout=60)
+        r.raise_for_status()
+        data = r.json()
+        return data.get("intent",""), data.get("plan",""), data.get("command","")
     except Exception as e:
-        return f"[❌ Failed to reach Ollama: {e}]"
+        print(f\"{Fore.RED}[Failed to reach n8n: {e}]\")
+        return None, None, None
+
+def ask_ollama_direct(prompt):
+    headers = {"Content-Type":"application/json"}
+    payload = {"model":OLLAMA_MODEL, "prompt":prompt, "stream":False}
+    try:
+        r = requests.post(OLLAMA_ENDPOINT, headers=headers, json=payload, timeout=60)
+        r.raise_for_status()
+        return r.json().get("response","")
+    except:
+        return ""
 
 def billy_loop():
-    print("\n🤖  Welcome to Billy — your local AI Linux shell. Type 'exit' or Ctrl+D to quit.\n")
+    print(f\"\\n{Style.BRIGHT}🤖  Welcome to {Fore.CYAN}Billy{Style.RESET_ALL} — your local AI shell.{Style.RESET_ALL}\\n\")
     while True:
         try:
-            user_input = input("💬 You: ").strip()
-            if user_input.lower() in ('exit', 'quit'): break
+            user_input = input(f\"{Fore.GREEN}💬 You:{Style.RESET_ALL} \").strip()
+            if user_input.lower() in ('exit','quit'): break
             if not user_input: continue
 
-            print("\n🧠 Billy is thinking...")
-            generated_cmd = ask_ollama_for_command(user_input)
-
-            if generated_cmd.startswith("[❌"):
-                print(generated_cmd)
+            # built-in skills first
+            skill = skill_manager.get_skill(user_input)
+            if skill:
+                print(f\"{Fore.MAGENTA}[Running skill: {skill.name}]\")
+                print(skill.handle(), end=\"\\n\\n\")
                 continue
 
-            print(f"\n💡 Suggested command: \033[1;36m{generated_cmd}\033[0m")
+            # use n8n or fallback LLM
+            if USE_N8N:
+                intent, plan, cmd = ask_n8n(user_input)
+                if not cmd:
+                    print(f\"{Fore.RED}[n8n flow failed, falling back to direct LLM]\")
+                    cmd = ask_ollama_direct(user_input)
+                else:
+                    print(f\"\\n{Fore.YELLOW}🔍 Intent: {Style.RESET_ALL}{intent}\")
+                    print(f\"\\n{Fore.YELLOW}📝 Plan: {Style.RESET_ALL}{plan}\\n\")
+            else:
+                cmd = ask_ollama_direct(user_input)
 
-            safe, reason = safety_checker.analyze(generated_cmd)
-            print(f"\n🔎 Safety Check: {reason}")
-            if not safe:
-                confirm = input("❗ Are you sure you want to run this command? [y/N]: ").strip().lower()
-                if confirm != 'y':
-                    print("[🛑 Command canceled by user.]")
-                    continue
+            # safety & confirm
+            print(f\"{Style.BRIGHT}💡 Suggest: {Fore.CYAN}{cmd}{Style.RESET_ALL}\\n\")
+            safe, reason, score = safety_checker.analyze_with_score(cmd)
+            print(f\"🔎 Safety: {reason} (score {score:.2f})\")
+            if not safe and input(f\"{Fore.RED}❗ Run anyway? [y/N]: {Style.RESET_ALL}\").lower()!='y':
+                print(f\"{Fore.YELLOW}[Canceled]\\n\")
+                continue
 
-            required_tool = generated_cmd.split()[0]
-            if not is_tool_installed(required_tool):
-                print(f"[🔍 Tool '{required_tool}' not found on system]")
-                confirm = input(f"❓ Install '{required_tool}' using apt? [y/N]: ").strip().lower()
-                if confirm == 'y':
-                    try_install_tool(required_tool)
-                    if not is_tool_installed(required_tool):
-                        print(f"[⛔ Aborting. '{required_tool}' still not available.]")
+            tool = cmd.split()[0]
+            if not is_tool_installed(tool):
+                if input(f\"{Fore.YELLOW}❓ Install '{tool}'? [y/N]: {Style.RESET_ALL}\").lower()=='y':
+                    try_install_tool(tool)
+                    if not is_tool_installed(tool):
+                        print(f\"{Fore.RED}[Still missing '{tool}'], skipping]\\n\")
                         continue
                 else:
-                    print("[🚫 Skipping execution.]")
+                    print(f\"{Fore.YELLOW}[Skipped]\\n\")
                     continue
 
-            log_command(generated_cmd)
-            print("\n⚙️  Running command...")
-            output = run_command(generated_cmd)
-            print(f"\n📤 Output:\n{output}\n")
+            log_command(cmd)
+            print(f\"⚙️  Running...\\n\")
+            print(run_command(cmd), end=\"\\n\\n\")
 
         except (EOFError, KeyboardInterrupt):
-            print("\n👋 Exiting Billy. Goodbye!")
+            print(f\"\\n{Style.BRIGHT}👋 Goodbye!{Style.RESET_ALL}\")
             break
 
-if __name__ == "__main__":
+if __name__ == \"__main__\":
     billy_loop()

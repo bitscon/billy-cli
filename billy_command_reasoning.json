@@ -1,0 +1,152 @@
+{
+  "name": "billy_command_reasoning",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "billy-ask"
+      },
+      "name": "HTTP Trigger",
+      "type": "n8n-nodes-base.httpTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "url": "http://localhost:11434/api/generate",
+        "options": {},
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "model",
+              "value": "llama3.2:latest"
+            },
+            {
+              "name": "prompt",
+              "value": "You are a Linux command-line assistant.\\n\\nStep 1: Given this user input, extract the user intent in one concise sentence:\\n\n\"{{$json.body.prompt}}\""
+            },
+            {
+              "name": "stream",
+              "value": false
+            }
+          ]
+        }
+      },
+      "name": "Intent Gen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [500, 200]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "url": "http://localhost:11434/api/generate",
+        "options": {},
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "model",
+              "value": "llama3.2:latest"
+            },
+            {
+              "name": "prompt",
+              "value": "Step 2: Given this intent, outline the execution plan in clear bullet points:\\n\nIntent: {{$node[\"Intent Gen\"].json.response}}"
+            },
+            {
+              "name": "stream",
+              "value": false
+            }
+          ]
+        }
+      },
+      "name": "Plan Gen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [750, 200]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "url": "http://localhost:11434/api/generate",
+        "options": {},
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "model",
+              "value": "llama3.2:latest"
+            },
+            {
+              "name": "prompt",
+              "value": "Step 3: Based on this plan, generate the final bash command only (no explanation):\\n\nPlan: {{$node[\"Plan Gen\"].json.response}}"
+            },
+            {
+              "name": "stream",
+              "value": false
+            }
+          ]
+        }
+      },
+      "name": "Command Gen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "intent",
+              "value": "={{$node[\"Intent Gen\"].json.response}}"
+            },
+            {
+              "name": "plan",
+              "value": "={{$node[\"Plan Gen\"].json.response}}"
+            },
+            {
+              "name": "command",
+              "value": "={{$node[\"Command Gen\"].json.response}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Set Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1250, 300]
+    }
+  ],
+  "connections": {
+    "HTTP Trigger": {
+      "main": [
+        [
+          { "node": "Intent Gen", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Intent Gen": {
+      "main": [
+        [
+          { "node": "Plan Gen", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Plan Gen": {
+      "main": [
+        [
+          { "node": "Command Gen", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Command Gen": {
+      "main": [
+        [
+          { "node": "Set Output", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  }
+}
